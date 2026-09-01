@@ -1,0 +1,423 @@
+/* =========================================================
+   Project-CX Modern Theme (Dark Glassmorphism & Vibrant UI)
+   ========================================================= */
+
+.root {
+    -fx-font-family: 'Segoe UI', 'Inter', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+    -fx-base: #0f172a;
+    -fx-background-color: #0b0f19;
+    -fx-text-fill: #f8fafc;
+}
+
+/* =========================================================
+   1. Login & Registration Screen Styles
+   ========================================================= */
+.login-container {
+    -fx-background-color: radial-gradient(center 50% 30%, radius 70%, #1e1b4b, #0b0f19);
+}
+
+.login-title {
+    -fx-font-size: 32px;
+    -fx-font-weight: 900;
+    -fx-text-fill: #ffffff;
+    -fx-effect: dropshadow(gaussian, rgba(99, 102, 241, 0.6), 16, 0.4, 0, 0);
+}
+
+.login-subtitle {
+    -fx-font-size: 13px;
+    -fx-text-fill: #94a3b8;
+}
+
+.login-card {
+    -fx-background-color: rgba(30, 41, 59, 0.85);
+    -fx-background-radius: 16;
+    -fx-border-color: rgba(255, 255, 255, 0.1);
+    -fx-border-radius: 16;
+    -fx-border-width: 1;
+    -fx-effect: dropshadow(three-pass-box, rgba(0, 0, 0, 0.4), 20, 0, 0, 10);
+    -fx-max-width: 380;
+}
+
+.input-label {
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #cbd5e1;
+}
+
+.form-input {
+    -fx-background-color: #0f172a;
+    -fx-text-fill: #f8fafc;
+    -fx-prompt-text-fill: #64748b;
+    -fx-background-radius: 8;
+    -fx-border-color: #334155;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+    -fx-padding: 10 14;
+    -fx-font-size: 13px;
+}
+
+.form-input:focused {
+    -fx-border-color: #6366f1;
+    -fx-effect: dropshadow(gaussian, rgba(99, 102, 241, 0.4), 8, 0.2, 0, 0);
+}
+
+.btn-login {
+    -fx-background-color: linear-gradient(to right, #4f46e5, #7c3aed);
+    -fx-text-fill: white;
+    -fx-font-weight: bold;
+    -fx-font-size: 14px;
+    -fx-background-radius: 8;
+    -fx-padding: 11 20;
+    -fx-cursor: hand;
+    -fx-effect: dropshadow(gaussian, rgba(79, 70, 229, 0.4), 10, 0.2, 0, 3);
+}
+
+.btn-login:hover {
+    -fx-background-color: linear-gradient(to right, #4338ca, #6d28d9);
+}
+
+.btn-register {
+    -fx-background-color: transparent;
+    -fx-text-fill: #cbd5e1;
+    -fx-border-color: #475569;
+    -fx-border-radius: 8;
+    -fx-font-weight: bold;
+    -fx-font-size: 13px;
+    -fx-background-radius: 8;
+    -fx-padding: 10 20;
+    -fx-cursor: hand;
+}
+
+.btn-register:hover {
+    -fx-background-color: rgba(255, 255, 255, 0.05);
+    -fx-border-color: #94a3b8;
+    -fx-text-fill: white;
+}
+
+.demo-link {
+    -fx-text-fill: #818cf8;
+    -fx-font-size: 11px;
+    -fx-border-color: transparent;
+    -fx-padding: 4 0;
+    -fx-cursor: hand;
+}
+
+.feedback-label {
+    -fx-font-weight: bold;
+}
+
+/* =========================================================
+   2. Main Chat Layout & Sidebar
+   ========================================================= */
+.chat-layout {
+    -fx-background-color: #0b0f19;
+}
+
+.sidebar {
+    -fx-background-color: #0f172a;
+    -fx-border-color: #1e293b;
+    -fx-border-width: 0 1 0 0;
+}
+
+.user-profile-card {
+    -fx-background-color: #1e293b;
+    -fx-background-radius: 12;
+    -fx-padding: 10 14;
+    -fx-border-color: #334155;
+    -fx-border-radius: 12;
+    -fx-border-width: 1;
+}
+
+.profile-name {
+    -fx-font-weight: bold;
+    -fx-font-size: 14px;
+    -fx-text-fill: #f8fafc;
+}
+
+.profile-status {
+    -fx-font-size: 11px;
+    -fx-text-fill: #94a3b8;
+}
+
+.btn-logout {
+    -fx-background-color: rgba(239, 68, 68, 0.15);
+    -fx-text-fill: #fca5a5;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-background-radius: 6;
+    -fx-padding: 5 10;
+    -fx-cursor: hand;
+}
+
+.btn-logout:hover {
+    -fx-background-color: rgba(239, 68, 68, 0.3);
+}
+
+.section-title {
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #64748b;
+    -fx-letter-spacing: 1px;
+}
+
+.btn-add-peer {
+    -fx-background-color: #1e293b;
+    -fx-text-fill: #38bdf8;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-background-radius: 6;
+    -fx-padding: 4 10;
+    -fx-cursor: hand;
+}
+
+.btn-add-peer:hover {
+    -fx-background-color: #334155;
+}
+
+.peer-item {
+    -fx-background-color: #1e293b;
+    -fx-background-radius: 10;
+    -fx-border-color: transparent;
+    -fx-border-radius: 10;
+    -fx-border-width: 1;
+    -fx-cursor: hand;
+}
+
+.peer-item:hover {
+    -fx-background-color: #273549;
+    -fx-border-color: #38bdf844;
+}
+
+.peer-item-name {
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #e2e8f0;
+}
+
+.peer-item-endpoint {
+    -fx-font-size: 11px;
+    -fx-text-fill: #94a3b8;
+}
+
+/* =========================================================
+   3. Active Chat Area & Message Bubbles
+   ========================================================= */
+.chat-area {
+    -fx-background-color: #0b0f19;
+}
+
+.chat-header {
+    -fx-background-color: #0f172a;
+    -fx-border-color: #1e293b;
+    -fx-border-width: 0 0 1 0;
+}
+
+.active-peer-title {
+    -fx-font-size: 18px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #f8fafc;
+}
+
+.active-peer-subtitle {
+    -fx-font-size: 12px;
+    -fx-text-fill: #38bdf8;
+}
+
+.btn-secondary-sm {
+    -fx-background-color: #1e293b;
+    -fx-text-fill: #cbd5e1;
+    -fx-font-size: 11px;
+    -fx-background-radius: 6;
+    -fx-padding: 6 12;
+    -fx-cursor: hand;
+}
+
+.btn-secondary-sm:hover {
+    -fx-background-color: #334155;
+    -fx-text-fill: white;
+}
+
+.chat-scroll-pane, .transparent-scroll {
+    -fx-background: transparent;
+    -fx-background-color: transparent;
+}
+
+.chat-scroll-pane > .viewport, .transparent-scroll > .viewport {
+    -fx-background-color: transparent;
+}
+
+/* Outgoing Chat Bubble (Sent by local user) */
+.bubble-outgoing {
+    -fx-background-color: linear-gradient(to right, #4338ca, #6366f1);
+    -fx-background-radius: 14 14 2 14;
+    -fx-padding: 10 14;
+    -fx-effect: dropshadow(three-pass-box, rgba(0, 0, 0, 0.25), 8, 0, 0, 3);
+}
+
+.bubble-outgoing .bubble-sender {
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #c7d2fe;
+}
+
+.bubble-outgoing .bubble-time {
+    -fx-font-size: 10px;
+    -fx-text-fill: #a5b4fc;
+}
+
+.bubble-outgoing .bubble-text {
+    -fx-font-size: 13px;
+    -fx-text-fill: #ffffff;
+}
+
+/* Incoming Chat Bubble (Sent by remote peer) */
+.bubble-incoming {
+    -fx-background-color: #1e293b;
+    -fx-background-radius: 14 14 14 2;
+    -fx-padding: 10 14;
+    -fx-border-color: #334155;
+    -fx-border-radius: 14 14 14 2;
+    -fx-border-width: 1;
+    -fx-effect: dropshadow(three-pass-box, rgba(0, 0, 0, 0.25), 8, 0, 0, 3);
+}
+
+.bubble-incoming .bubble-sender {
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #38bdf8;
+}
+
+.bubble-incoming .bubble-time {
+    -fx-font-size: 10px;
+    -fx-text-fill: #94a3b8;
+}
+
+.bubble-incoming .bubble-text {
+    -fx-font-size: 13px;
+    -fx-text-fill: #f1f5f9;
+}
+
+/* File Transfer Card inside bubble */
+.file-transfer-card {
+    -fx-background-color: rgba(0, 0, 0, 0.25);
+    -fx-background-radius: 8;
+    -fx-padding: 8 12;
+    -fx-border-color: rgba(255, 255, 255, 0.1);
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+}
+
+.file-name {
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #ffffff;
+}
+
+.file-details {
+    -fx-font-size: 11px;
+    -fx-text-fill: #cbd5e1;
+}
+
+/* =========================================================
+   4. Chat Input Bar
+   ========================================================= */
+.chat-input-bar {
+    -fx-background-color: #0f172a;
+    -fx-border-color: #1e293b;
+    -fx-border-width: 1 0 0 0;
+}
+
+.chat-text-input {
+    -fx-background-color: #1e293b;
+    -fx-text-fill: #f8fafc;
+    -fx-prompt-text-fill: #64748b;
+    -fx-background-radius: 20;
+    -fx-border-color: #334155;
+    -fx-border-radius: 20;
+    -fx-border-width: 1;
+    -fx-padding: 10 18;
+    -fx-font-size: 13px;
+}
+
+.chat-text-input:focused {
+    -fx-border-color: #6366f1;
+    -fx-effect: dropshadow(gaussian, rgba(99, 102, 241, 0.4), 8, 0.2, 0, 0);
+}
+
+.btn-attach {
+    -fx-background-color: #1e293b;
+    -fx-text-fill: #cbd5e1;
+    -fx-font-size: 12px;
+    -fx-background-radius: 18;
+    -fx-padding: 9 14;
+    -fx-cursor: hand;
+}
+
+.btn-attach:hover {
+    -fx-background-color: #334155;
+    -fx-text-fill: white;
+}
+
+.btn-send {
+    -fx-background-color: #4f46e5;
+    -fx-text-fill: white;
+    -fx-font-weight: bold;
+    -fx-font-size: 12px;
+    -fx-background-radius: 18;
+    -fx-padding: 9 20;
+    -fx-cursor: hand;
+    -fx-effect: dropshadow(gaussian, rgba(79, 70, 229, 0.4), 8, 0.2, 0, 2);
+}
+
+.btn-send:hover {
+    -fx-background-color: #4338ca;
+}
+
+/* =========================================================
+   5. Account Tools (Scan & Delete User Data)
+   ========================================================= */
+.btn-tools-link {
+    -fx-background-color: transparent;
+    -fx-text-fill: #94a3b8;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-cursor: hand;
+    -fx-padding: 4 6;
+}
+
+.btn-tools-link:hover {
+    -fx-text-fill: #38bdf8;
+}
+
+.btn-danger-outline {
+    -fx-background-color: rgba(239, 68, 68, 0.1);
+    -fx-text-fill: #fca5a5;
+    -fx-border-color: rgba(239, 68, 68, 0.4);
+    -fx-border-radius: 6;
+    -fx-background-radius: 6;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-padding: 5 10;
+    -fx-cursor: hand;
+}
+
+.btn-danger-outline:hover {
+    -fx-background-color: rgba(239, 68, 68, 0.25);
+    -fx-border-color: #ef4444;
+    -fx-text-fill: #ffffff;
+}
+
+.user-item-card {
+    -fx-background-color: #0f172a;
+    -fx-background-radius: 8;
+    -fx-border-color: #1e293b;
+    -fx-border-radius: 8;
+    -fx-border-width: 1;
+    -fx-padding: 8 12;
+}
+
+.user-item-card:hover {
+    -fx-background-color: #1e293b;
+    -fx-border-color: #38bdf844;
+}
+

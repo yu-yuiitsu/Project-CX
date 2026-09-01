@@ -1,39 +1,41 @@
+# Build output
 target/
+build/
+bin/
 !.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
-.kotlin
 
-### IntelliJ IDEA ###
-.idea/modules.xml
-.idea/jarRepositories.xml
-.idea/compiler.xml
-.idea/libraries/
-*.iws
+# Database files (SQLite)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+
+# IDE & Editor Configurations
+.idea/
 *.iml
+*.iws
 *.ipr
-
-### Eclipse ###
-.apt_generated
+.vscode/
+.settings/
+.project
 .classpath
 .factorypath
-.project
-.settings
+.apt_generated
 .springBeans
 .sts4-cache
-
-### NetBeans ###
 /nbproject/private/
 /nbbuild/
 /dist/
 /nbdist/
 /.nb-gradle/
-build/
-!**/src/main/**/build/
-!**/src/test/**/build/
 
-### VS Code ###
-.vscode/
-
-### Mac OS ###
+# OS Specific
 .DS_Store
+Thumbs.db

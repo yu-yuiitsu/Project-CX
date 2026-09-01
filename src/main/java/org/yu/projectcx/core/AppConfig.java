@@ -1,0 +1,16 @@
+package org.yu.projectcx.core;
+
+/**
+ * Global application configuration and environment properties.
+ */
+public class AppConfig {
+
+    public static final String APP_NAME = "Project-CX";
+    public static final String APP_VERSION = "1.0.0-SNAPSHOT";
+    public static final int DEFAULT_WINDOW_WIDTH = 900;
+    public static final int DEFAULT_WINDOW_HEIGHT = 600;
+
+    private AppConfig() {
+        // Prevent instantiation
+    }
+}
