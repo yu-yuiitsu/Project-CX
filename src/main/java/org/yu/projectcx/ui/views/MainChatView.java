@@ -330,7 +330,7 @@ public class MainChatView implements ChatEventListener {
                 connectedPeers.add(p);
             } else if (st == ConnectionStatus.REQUEST_RECEIVED || st == ConnectionStatus.REQUEST_SENT) {
                 requestPeers.add(p);
-            } else {
+            } else if (p.isOnline()) {
                 discoveredPeers.add(p);
             }
         }
@@ -408,8 +408,10 @@ public class MainChatView implements ChatEventListener {
                     selectPeer(connectedPeers.get(0));
                 } else if (!requestPeers.isEmpty()) {
                     selectPeer(requestPeers.get(0));
-                } else {
+                } else if (!discoveredPeers.isEmpty()) {
                     selectPeer(discoveredPeers.get(0));
+                } else {
+                    selectPeer(validPeers.get(0));
                 }
             } else {
                 validPeers.stream().filter(p -> p.equals(selectedPeer)).findFirst().ifPresent(p -> {

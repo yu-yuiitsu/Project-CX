@@ -81,13 +81,21 @@ public class PeerManager {
         Peer direct = peerDirectory.get(peerId);
         if (direct != null) return Optional.of(direct);
         // Fallback: search by alias or any stored peerId matching (case-insensitive)
+        final String targetId = peerId.toLowerCase();
+        final String cleanTarget = targetId.startsWith("peer_") ? targetId.substring(5) : targetId;
+        final String prefixTarget = "peer_" + cleanTarget;
+
         return peerDirectory.values().stream()
-                .filter(p -> p.getPeerId().equalsIgnoreCase(peerId)
-                        || p.getAlias().equalsIgnoreCase(peerId)
-                        || ("peer_" + p.getAlias()).equalsIgnoreCase(peerId)
-                        || ("peer_" + p.getPeerId()).equalsIgnoreCase(peerId)
-                        || p.getPeerId().replace("peer_", "").equalsIgnoreCase(peerId.replace("peer_", ""))
-                        || (p.getAlias() != null && p.getAlias().replace("peer_", "").equalsIgnoreCase(peerId.replace("peer_", ""))))
+                .filter(p -> {
+                    String pId = p.getPeerId() != null ? p.getPeerId().toLowerCase() : "";
+                    String pAlias = p.getAlias() != null ? p.getAlias().toLowerCase() : "";
+                    String cleanPId = pId.startsWith("peer_") ? pId.substring(5) : pId;
+                    String cleanPAlias = pAlias.startsWith("peer_") ? pAlias.substring(5) : pAlias;
+
+                    return pId.equals(targetId) || pAlias.equals(targetId)
+                            || pId.equals(prefixTarget) || pAlias.equals(prefixTarget)
+                            || cleanPId.equals(cleanTarget) || cleanPAlias.equals(cleanTarget);
+                })
                 .findFirst();
     }
 

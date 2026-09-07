@@ -210,55 +210,76 @@ public class WebRTCManager implements SignalingEventListener {
             try {
                 if (peerConnection.getSignalingState() == RTCSignalingState.HAVE_LOCAL_OFFER) {
                     if (localPeerId.compareTo(remotePeerId) < 0) {
-                        logger.info("Glare detected: local offer takes precedence, ignoring remote offer.");
+                        logger.info("Glare detected: local offer takes precedence, ignoring remote offer from [{}].", remotePeerId);
                         return;
-                    }
-                }
-
-                RTCSessionDescription remoteOffer = new RTCSessionDescription(RTCSdpType.OFFER, offerSdp);
-                this.offerSetRemoteObserver = new SetSessionDescriptionObserver() {
-                    @Override
-                    public void onSuccess() {
-                        logger.info("Set remote SDP Offer. Generating SDP Answer...");
-                        RTCAnswerOptions options = new RTCAnswerOptions();
-                        answerCreateObserver = new CreateSessionDescriptionObserver() {
+                    } else {
+                        logger.warn("Glare detected: yielding to remote offer from [{}], rolling back local offer.", remotePeerId);
+                        isConnecting.set(false);
+                        peerConnection.setLocalDescription(new RTCSessionDescription(RTCSdpType.ROLLBACK, ""), new SetSessionDescriptionObserver() {
                             @Override
-                            public void onSuccess(RTCSessionDescription answerDescription) {
-                                answerSetLocalObserver = new SetSessionDescriptionObserver() {
-                                    @Override
-                                    public void onSuccess() {
-                                        logger.info("Set local SDP Answer. Transmitting Answer via signaling...");
-                                        if (signalingManager != null) {
-                                            signalingManager.sendAnswer(remoteHost, remotePort, localPeerId, remotePeerId, answerDescription.sdp);
-                                        }
-                                    }
-
-                                    @Override
-                                    public void onFailure(String error) {
-                                        logger.error("Failed to set local answer description: {}", error);
-                                    }
-                                };
-                                peerConnection.setLocalDescription(answerDescription, answerSetLocalObserver);
+                            public void onSuccess() {
+                                logger.info("Rollback successful. Processing remote offer from [{}]", remotePeerId);
+                                processRemoteOffer(offerSdp);
                             }
 
                             @Override
                             public void onFailure(String error) {
-                                logger.error("Failed to create SDP Answer: {}", error);
+                                logger.error("Failed to rollback local offer during glare with peer [{}]: {}", remotePeerId, error);
                             }
-                        };
-                        peerConnection.createAnswer(options, answerCreateObserver);
+                        });
+                        return;
                     }
+                }
 
-                    @Override
-                    public void onFailure(String error) {
-                        logger.error("Failed to set remote offer description: {}", error);
-                    }
-                };
-                peerConnection.setRemoteDescription(remoteOffer, this.offerSetRemoteObserver);
+                processRemoteOffer(offerSdp);
             } catch (Exception e) {
                 logger.error("Error handling remote offer", e);
             }
         });
+    }
+
+    private void processRemoteOffer(String offerSdp) {
+        if (peerConnection == null) return;
+        RTCSessionDescription remoteOffer = new RTCSessionDescription(RTCSdpType.OFFER, offerSdp);
+        this.offerSetRemoteObserver = new SetSessionDescriptionObserver() {
+            @Override
+            public void onSuccess() {
+                logger.info("Set remote SDP Offer. Generating SDP Answer...");
+                RTCAnswerOptions options = new RTCAnswerOptions();
+                answerCreateObserver = new CreateSessionDescriptionObserver() {
+                    @Override
+                    public void onSuccess(RTCSessionDescription answerDescription) {
+                        answerSetLocalObserver = new SetSessionDescriptionObserver() {
+                            @Override
+                            public void onSuccess() {
+                                logger.info("Set local SDP Answer. Transmitting Answer via signaling...");
+                                if (signalingManager != null) {
+                                    signalingManager.sendAnswer(remoteHost, remotePort, localPeerId, remotePeerId, answerDescription.sdp);
+                                }
+                            }
+
+                            @Override
+                            public void onFailure(String error) {
+                                logger.error("Failed to set local answer description: {}", error);
+                            }
+                        };
+                        peerConnection.setLocalDescription(answerDescription, answerSetLocalObserver);
+                    }
+
+                    @Override
+                    public void onFailure(String error) {
+                        logger.error("Failed to create SDP Answer: {}", error);
+                    }
+                };
+                peerConnection.createAnswer(options, answerCreateObserver);
+            }
+
+            @Override
+            public void onFailure(String error) {
+                logger.error("Failed to set remote offer description: {}", error);
+            }
+        };
+        peerConnection.setRemoteDescription(remoteOffer, this.offerSetRemoteObserver);
     }
 
     /**
@@ -440,12 +461,11 @@ public class WebRTCManager implements SignalingEventListener {
     private boolean isMatchingPeer(String senderId) {
         if (senderId == null || remotePeerId == null) return false;
         if (remotePeerId.equalsIgnoreCase(senderId)) return true;
-        String s1 = remotePeerId.toLowerCase().replaceAll("[^a-z0-9_]", "");
-        String s2 = senderId.toLowerCase().replaceAll("[^a-z0-9_]", "");
-        if (s1.equals(s2)) return true;
-        String clean1 = s1.replace("peer_", "").replace("peer", "");
-        String clean2 = s2.replace("peer_", "").replace("peer", "");
-        return clean1.equals(clean2);
+
+        String cleanRemote = remotePeerId.toLowerCase().replaceFirst("^peer_", "");
+        String cleanSender = senderId.toLowerCase().replaceFirst("^peer_", "");
+
+        return !cleanRemote.isEmpty() && cleanRemote.equalsIgnoreCase(cleanSender);
     }
 
     @Override

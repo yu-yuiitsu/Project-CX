@@ -355,7 +355,7 @@ public class ChatManager {
         if (requester == null) return;
 
         String serializedConnected = peerManager.getAllPeers().stream()
-                .filter(p -> p.getConnectionStatus() == ConnectionStatus.CONNECTED && !p.getPeerId().equalsIgnoreCase(requesterId))
+                .filter(p -> p.getConnectionStatus() == ConnectionStatus.CONNECTED && p.isOnline() && !p.getPeerId().equalsIgnoreCase(requesterId))
                 .map(p -> p.getPeerId() + ":" + p.getAlias() + ":" + p.getIpAddress() + ":" + p.getPort())
                 .collect(java.util.stream.Collectors.joining(";"));
 
@@ -1311,12 +1311,28 @@ public class ChatManager {
         List<Peer> dbPeers = peerRepository.getAllPeers();
         peerManager.clear();
         for (Peer p : dbPeers) {
-            if (p.getAlias().startsWith("Peer:")) continue;
+            if (p.getAlias() != null && p.getAlias().startsWith("Peer:")) continue;
+            if (p.getAlias() != null && (
+                    p.getAlias().equalsIgnoreCase("alice")
+                    || p.getAlias().equalsIgnoreCase("bob")
+                    || p.getAlias().equalsIgnoreCase("charlie")
+                    || p.getAlias().toLowerCase().startsWith("test_")
+            )) {
+                continue;
+            }
+            if (p.getPeerId() != null && (
+                    p.getPeerId().equalsIgnoreCase("peer_alice")
+                    || p.getPeerId().equalsIgnoreCase("peer_bob")
+                    || p.getPeerId().equalsIgnoreCase("peer_charlie")
+                    || p.getPeerId().toLowerCase().startsWith("test_")
+            )) {
+                continue;
+            }
             if (currentUser != null && (
                     p.getPeerId().equals(currentUser.getUserId()) ||
                     p.getPeerId().equalsIgnoreCase(currentUser.getUsername()) ||
-                    p.getAlias().equalsIgnoreCase(currentUser.getUsername()) ||
-                    p.getAlias().equalsIgnoreCase(currentUser.getDisplayName()) ||
+                    (p.getAlias() != null && p.getAlias().equalsIgnoreCase(currentUser.getUsername())) ||
+                    (p.getAlias() != null && p.getAlias().equalsIgnoreCase(currentUser.getDisplayName())) ||
                     p.getPeerId().equalsIgnoreCase("peer_" + currentUser.getUsername())
             )) {
                 continue;

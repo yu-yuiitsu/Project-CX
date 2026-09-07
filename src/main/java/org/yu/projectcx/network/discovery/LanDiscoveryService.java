@@ -138,7 +138,15 @@ public class LanDiscoveryService {
         if (multicastSocket != null && !multicastSocket.isClosed()) {
             try {
                 if (multicastGroup != null) {
-                    multicastSocket.leaveGroup(new InetSocketAddress(multicastGroup, DISCOVERY_PORT), null);
+                    Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+                    while (interfaces != null && interfaces.hasMoreElements()) {
+                        NetworkInterface ni = interfaces.nextElement();
+                        if (ni.isUp() && ni.supportsMulticast()) {
+                            try {
+                                multicastSocket.leaveGroup(new InetSocketAddress(multicastGroup, DISCOVERY_PORT), ni);
+                            } catch (Exception ignored) {}
+                        }
+                    }
                 }
             } catch (Exception ignored) {}
             multicastSocket.close();
@@ -205,7 +213,7 @@ public class LanDiscoveryService {
             }
 
             // Path 3: Periodic Subnet Unicast Probing for Mobile Hotspots (every 5 seconds)
-            if (broadcastCounter.incrementAndGet() % 5 == 0) {
+            if (org.yu.projectcx.core.AppConfig.isAggressiveDiscoveryEnabled() && broadcastCounter.incrementAndGet() % 5 == 0) {
                 sweepSubnetUnicast(buffer);
             }
         } catch (Exception e) {

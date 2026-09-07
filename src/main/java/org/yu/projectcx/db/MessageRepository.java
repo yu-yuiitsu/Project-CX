@@ -163,6 +163,13 @@ public class MessageRepository {
         Set<String> bIds = collectPeerIdentifiers(participantB);
         if (aIds.isEmpty() || bIds.isEmpty()) return conversation;
 
+        // Prevent SQLite parameter limit overflow (999 parameter limit)
+        if (aIds.size() + bIds.size() > 200) {
+            logger.warn("Too many peer identifiers detected for [{}] and [{}] (count: {}). Aborting query to prevent SQLite parameter crash.",
+                    participantA, participantB, aIds.size() + bIds.size());
+            return conversation;
+        }
+
         String placeholdersA = makePlaceholders(aIds.size());
         String placeholdersB = makePlaceholders(bIds.size());
 
@@ -262,6 +269,13 @@ public class MessageRepository {
         Set<String> peerIds = collectPeerIdentifiers(peerId);
 
         if (userIds.isEmpty() || peerIds.isEmpty()) return conversation;
+
+        // Prevent SQLite parameter limit overflow (999 parameter limit)
+        if (userIds.size() + peerIds.size() > 200) {
+            logger.warn("Too many peer identifiers detected for user [{}] and peer [{}] (count: {}). Aborting query to prevent SQLite parameter crash.",
+                    username != null ? username : userId, peerId, userIds.size() + peerIds.size());
+            return conversation;
+        }
 
         String placeholdersUser = makePlaceholders(userIds.size());
         String placeholdersPeer = makePlaceholders(peerIds.size());
