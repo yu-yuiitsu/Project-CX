@@ -15,8 +15,11 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Data Access Object (DAO) Repository for polymorphic NetworkPayload persistence in SQLite.
@@ -156,22 +159,27 @@ public class MessageRepository {
             return conversation;
         }
 
-        String sql = """
-            SELECT * FROM messages
-            WHERE (sender_id = ? AND recipient_id = ?)
-               OR (sender_id = ? AND recipient_id = ?)
-            ORDER BY created_at ASC
-            LIMIT ?;
-        """;
+        Set<String> aIds = collectPeerIdentifiers(participantA);
+        Set<String> bIds = collectPeerIdentifiers(participantB);
+        if (aIds.isEmpty() || bIds.isEmpty()) return conversation;
+
+        String placeholdersA = makePlaceholders(aIds.size());
+        String placeholdersB = makePlaceholders(bIds.size());
+
+        String sql = "SELECT * FROM messages WHERE recipient_id != 'group_all_connected' AND (" +
+                     " (sender_id IN (" + placeholdersA + ") AND recipient_id IN (" + placeholdersB + "))" +
+                     " OR (sender_id IN (" + placeholdersB + ") AND recipient_id IN (" + placeholdersA + "))" +
+                     ") ORDER BY created_at ASC LIMIT ?;";
 
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
-            pstmt.setString(1, participantA);
-            pstmt.setString(2, participantB);
-            pstmt.setString(3, participantB);
-            pstmt.setString(4, participantA);
-            pstmt.setInt(5, limit);
+            int idx = 1;
+            for (String id : aIds) pstmt.setString(idx++, id);
+            for (String id : bIds) pstmt.setString(idx++, id);
+            for (String id : bIds) pstmt.setString(idx++, id);
+            for (String id : aIds) pstmt.setString(idx++, id);
+            pstmt.setInt(idx, limit);
 
             try (ResultSet rs = pstmt.executeQuery()) {
                 while (rs.next()) {
@@ -185,18 +193,16 @@ public class MessageRepository {
     }
 
     /**
-     * Retrieves conversation history for a given peer ID or username flexibly.
+     * Retrieves the chronological group conversation history.
      */
-    public List<NetworkPayload> getConversationForPeer(String userId, String username, String peerId, int limit) {
+    public List<NetworkPayload> getGroupConversation(String groupId, int limit) {
         List<NetworkPayload> conversation = new ArrayList<>();
-        if (peerId == null || limit <= 0) return conversation;
+        if (limit <= 0) return conversation;
+        String targetGroup = (groupId != null && !groupId.trim().isEmpty()) ? groupId.trim() : "group_all_connected";
 
-        String cleanPeer = peerId.replace("peer_", "");
         String sql = """
             SELECT * FROM messages
-            WHERE sender_id = ? OR recipient_id = ?
-               OR sender_id = ? OR recipient_id = ?
-               OR sender_id LIKE ? OR recipient_id LIKE ?
+            WHERE recipient_id = ?
             ORDER BY created_at ASC
             LIMIT ?;
         """;
@@ -204,13 +210,76 @@ public class MessageRepository {
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
-            pstmt.setString(1, peerId);
-            pstmt.setString(2, peerId);
-            pstmt.setString(3, cleanPeer);
-            pstmt.setString(4, cleanPeer);
-            pstmt.setString(5, "%" + cleanPeer + "%");
-            pstmt.setString(6, "%" + cleanPeer + "%");
-            pstmt.setInt(7, limit);
+            pstmt.setString(1, targetGroup);
+            pstmt.setInt(2, limit);
+
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    conversation.add(mapResultSetToPayload(rs));
+                }
+            }
+        } catch (SQLException e) {
+            logger.error("Failed to retrieve group conversation for " + targetGroup, e);
+        }
+        return conversation;
+    }
+
+    public List<NetworkPayload> getGroupConversation(String groupId) {
+        return getGroupConversation(groupId, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Clears group conversation history from database.
+     */
+    public boolean clearGroupConversation(String groupId) {
+        String targetGroup = (groupId != null && !groupId.trim().isEmpty()) ? groupId.trim() : "group_all_connected";
+        String sql = "DELETE FROM messages WHERE recipient_id = ?;";
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            pstmt.setString(1, targetGroup);
+            return pstmt.executeUpdate() > 0;
+        } catch (SQLException e) {
+            logger.error("Failed to clear group conversation for " + targetGroup, e);
+            return false;
+        }
+    }
+
+    /**
+     * Retrieves conversation history for a given peer ID or username flexibly.
+     */
+    public List<NetworkPayload> getConversationForPeer(String userId, String username, String peerId, int limit) {
+        List<NetworkPayload> conversation = new ArrayList<>();
+        if (peerId == null || limit <= 0) return conversation;
+
+        Set<String> userIds = new LinkedHashSet<>();
+        if (userId != null && !userId.trim().isEmpty()) {
+            userIds.addAll(collectPeerIdentifiers(userId));
+        }
+        if (username != null && !username.trim().isEmpty()) {
+            userIds.addAll(collectPeerIdentifiers(username));
+        }
+        Set<String> peerIds = collectPeerIdentifiers(peerId);
+
+        if (userIds.isEmpty() || peerIds.isEmpty()) return conversation;
+
+        String placeholdersUser = makePlaceholders(userIds.size());
+        String placeholdersPeer = makePlaceholders(peerIds.size());
+
+        String sql = "SELECT * FROM messages WHERE recipient_id != 'group_all_connected' AND (" +
+                     " (sender_id IN (" + placeholdersUser + ") AND recipient_id IN (" + placeholdersPeer + "))" +
+                     " OR (sender_id IN (" + placeholdersPeer + ") AND recipient_id IN (" + placeholdersUser + "))" +
+                     ") ORDER BY created_at ASC LIMIT ?;";
+
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            int idx = 1;
+            for (String id : userIds) pstmt.setString(idx++, id);
+            for (String id : peerIds) pstmt.setString(idx++, id);
+            for (String id : peerIds) pstmt.setString(idx++, id);
+            for (String id : userIds) pstmt.setString(idx++, id);
+            pstmt.setInt(idx, limit);
 
             try (ResultSet rs = pstmt.executeQuery()) {
                 while (rs.next()) {
@@ -285,18 +354,28 @@ public class MessageRepository {
      * Clears all conversation history between two participants.
      */
     public boolean clearConversation(String participantA, String participantB) {
-        String sql = """
-            DELETE FROM messages
-            WHERE (sender_id = ? AND recipient_id = ?)
-               OR (sender_id = ? AND recipient_id = ?);
-        """;
+        if (participantA == null || participantB == null) return false;
+
+        Set<String> aIds = collectPeerIdentifiers(participantA);
+        Set<String> bIds = collectPeerIdentifiers(participantB);
+        if (aIds.isEmpty() || bIds.isEmpty()) return false;
+
+        String placeholdersA = makePlaceholders(aIds.size());
+        String placeholdersB = makePlaceholders(bIds.size());
+
+        String sql = "DELETE FROM messages WHERE recipient_id != 'group_all_connected' AND (" +
+                     " (sender_id IN (" + placeholdersA + ") AND recipient_id IN (" + placeholdersB + "))" +
+                     " OR (sender_id IN (" + placeholdersB + ") AND recipient_id IN (" + placeholdersA + "))" +
+                     ");";
+
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
-            pstmt.setString(1, participantA);
-            pstmt.setString(2, participantB);
-            pstmt.setString(3, participantB);
-            pstmt.setString(4, participantA);
+            int idx = 1;
+            for (String id : aIds) pstmt.setString(idx++, id);
+            for (String id : bIds) pstmt.setString(idx++, id);
+            for (String id : bIds) pstmt.setString(idx++, id);
+            for (String id : aIds) pstmt.setString(idx++, id);
             return pstmt.executeUpdate() > 0;
         } catch (SQLException e) {
             logger.error("Failed to clear conversation between " + participantA + " and " + participantB, e);
@@ -329,5 +408,57 @@ public class MessageRepository {
 
             return new TextMessage(payloadId, senderId, recipientId, content, createdAt, delivered, read);
         }
+    }
+
+    public Set<String> collectPeerIdentifiers(String idOrName) {
+        Set<String> set = new LinkedHashSet<>();
+        if (idOrName == null || idOrName.trim().isEmpty()) return set;
+        String raw = idOrName.trim();
+        String clean = raw.replace("peer_", "");
+        set.add(raw);
+        set.add(clean);
+        set.add("peer_" + clean);
+
+        String sqlUser = "SELECT user_id, username, display_name FROM users WHERE user_id = ? OR username = ? OR display_name = ?;";
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sqlUser)) {
+            pstmt.setString(1, raw);
+            pstmt.setString(2, clean);
+            pstmt.setString(3, clean);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    String uid = rs.getString("user_id");
+                    String uname = rs.getString("username");
+                    String dname = rs.getString("display_name");
+                    if (uid != null) set.add(uid);
+                    if (uname != null) set.add(uname);
+                    if (dname != null) set.add(dname);
+                }
+            }
+        } catch (SQLException ignored) {}
+
+        String sqlPeer = "SELECT peer_id, alias FROM peers WHERE peer_id = ? OR alias = ? OR peer_id = ? OR alias = ?;";
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sqlPeer)) {
+            pstmt.setString(1, raw);
+            pstmt.setString(2, raw);
+            pstmt.setString(3, clean);
+            pstmt.setString(4, clean);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    String pid = rs.getString("peer_id");
+                    String alias = rs.getString("alias");
+                    if (pid != null) set.add(pid);
+                    if (alias != null) set.add(alias);
+                }
+            }
+        } catch (SQLException ignored) {}
+
+        return set;
+    }
+
+    private String makePlaceholders(int count) {
+        if (count <= 0) return "''";
+        return String.join(",", Collections.nCopies(count, "?"));
     }
 }

@@ -74,6 +74,41 @@ public class SignalingManager {
             }
 
             @Override
+            public void onConnectionRequestReceived(SignalingMessage message) {
+                for (SignalingEventListener l : listeners) l.onConnectionRequestReceived(message);
+            }
+
+            @Override
+            public void onConnectionAccepted(SignalingMessage message) {
+                for (SignalingEventListener l : listeners) l.onConnectionAccepted(message);
+            }
+
+            @Override
+            public void onConnectionRejected(SignalingMessage message) {
+                for (SignalingEventListener l : listeners) l.onConnectionRejected(message);
+            }
+
+            @Override
+            public void onPeerNetworkQueryReceived(SignalingMessage message) {
+                for (SignalingEventListener l : listeners) l.onPeerNetworkQueryReceived(message);
+            }
+
+            @Override
+            public void onPeerNetworkResponseReceived(SignalingMessage message) {
+                for (SignalingEventListener l : listeners) l.onPeerNetworkResponseReceived(message);
+            }
+
+            @Override
+            public void onGroupJoinRequestReceived(SignalingMessage message) {
+                for (SignalingEventListener l : listeners) l.onGroupJoinRequestReceived(message);
+            }
+
+            @Override
+            public void onGroupIntroduceReceived(SignalingMessage message) {
+                for (SignalingEventListener l : listeners) l.onGroupIntroduceReceived(message);
+            }
+
+            @Override
             public void onSignalingError(String errorMessage, Throwable cause) {
                 for (SignalingEventListener l : listeners) l.onSignalingError(errorMessage, cause);
             }
@@ -142,6 +177,45 @@ public class SignalingManager {
 
     public CompletableFuture<Void> sendBye(String host, int port, String localPeerId, String targetPeerId) {
         SignalingMessage msg = new SignalingMessage(SignalingType.BYE, localPeerId, targetPeerId);
+        return client.sendMessageAsync(host, port, msg);
+    }
+
+    public CompletableFuture<Void> sendConnectionRequest(String host, int port, String localPeerId, String targetPeerId, String localAlias) {
+        SignalingMessage msg = new SignalingMessage(SignalingType.CONNECT_REQUEST, localPeerId, targetPeerId, localAlias);
+        return client.sendMessageAsync(host, port, msg);
+    }
+
+    public CompletableFuture<Void> sendConnectionAccept(String host, int port, String localPeerId, String targetPeerId) {
+        return sendConnectionAccept(host, port, localPeerId, targetPeerId, getLocalPort());
+    }
+
+    public CompletableFuture<Void> sendConnectionAccept(String host, int port, String localPeerId, String targetPeerId, int localSignalingPort) {
+        SignalingMessage msg = new SignalingMessage(SignalingType.CONNECT_ACCEPT, localPeerId, targetPeerId, String.valueOf(localSignalingPort));
+        return client.sendMessageAsync(host, port, msg);
+    }
+
+    public CompletableFuture<Void> sendConnectionReject(String host, int port, String localPeerId, String targetPeerId) {
+        SignalingMessage msg = new SignalingMessage(SignalingType.CONNECT_REJECT, localPeerId, targetPeerId);
+        return client.sendMessageAsync(host, port, msg);
+    }
+
+    public CompletableFuture<Void> sendPeerNetworkQuery(String host, int port, String localPeerId, String targetPeerId) {
+        SignalingMessage msg = new SignalingMessage(SignalingType.PEER_NETWORK_QUERY, localPeerId, targetPeerId);
+        return client.sendMessageAsync(host, port, msg);
+    }
+
+    public CompletableFuture<Void> sendPeerNetworkResponse(String host, int port, String localPeerId, String targetPeerId, String serializedConnectedPeers) {
+        SignalingMessage msg = new SignalingMessage(SignalingType.PEER_NETWORK_RESPONSE, localPeerId, targetPeerId, serializedConnectedPeers);
+        return client.sendMessageAsync(host, port, msg);
+    }
+
+    public CompletableFuture<Void> sendGroupJoinRequest(String host, int port, String localPeerId, String targetPeerId, String localAlias) {
+        SignalingMessage msg = new SignalingMessage(SignalingType.GROUP_JOIN_REQUEST, localPeerId, targetPeerId, localAlias);
+        return client.sendMessageAsync(host, port, msg);
+    }
+
+    public CompletableFuture<Void> sendGroupIntroduce(String host, int port, String localPeerId, String targetPeerId, String newPeerEndpointInfo) {
+        SignalingMessage msg = new SignalingMessage(SignalingType.GROUP_INTRODUCE, localPeerId, targetPeerId, newPeerEndpointInfo);
         return client.sendMessageAsync(host, port, msg);
     }
 

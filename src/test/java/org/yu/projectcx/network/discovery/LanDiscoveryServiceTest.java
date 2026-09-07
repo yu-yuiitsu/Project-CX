@@ -59,4 +59,10 @@ class LanDiscoveryServiceTest {
         nodeA.start();
         assertDoesNotThrow(() -> nodeA.triggerLanScanAsync());
     }
+
+    @Test
+    void testSubnetUnicastSweep() {
+        nodeA.start();
+        assertDoesNotThrow(() -> nodeA.sweepSubnetUnicast("PROJECT_CX_PEER||test||Test||8888||12345".getBytes()));
+    }
 }

@@ -37,7 +37,7 @@ class MultithreadingTest {
 
     @BeforeEach
     void setUp() {
-        testDb = "chat_mt_" + UUID.randomUUID().toString().substring(0, 8) + ".db";
+        testDb = "target/chat_mt_" + UUID.randomUUID().toString().substring(0, 8) + ".db";
         databaseManager = new DatabaseManager(testDb);
         chatManager = new ChatManager(databaseManager);
     }
@@ -52,6 +52,8 @@ class MultithreadingTest {
         }
         if (testDb != null) {
             new File(testDb).delete();
+            new File(testDb + "-wal").delete();
+            new File(testDb + "-shm").delete();
             new File(testDb + "-journal").delete();
         }
     }

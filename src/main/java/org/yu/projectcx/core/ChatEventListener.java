@@ -11,11 +11,11 @@ import java.util.List;
  */
 public interface ChatEventListener {
 
-    void onMessageDispatched(TextMessage message);
+    default void onMessageDispatched(TextMessage message) {}
 
-    void onPayloadDispatched(NetworkPayload payload);
+    default void onPayloadDispatched(NetworkPayload payload) {}
 
-    void onPeerSelected(Peer peer);
+    default void onPeerSelected(Peer peer) {}
 
-    void onPeersUpdated(List<Peer> peers);
+    default void onPeersUpdated(List<Peer> peers) {}
 }

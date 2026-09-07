@@ -238,6 +238,7 @@ public class LoginView {
                 dialog.initOwner(navigator.getPrimaryStage());
                 dialog.setTitle("Local User Accounts");
                 dialog.setHeaderText("Scanned Registered Accounts in SQLite (" + users.size() + " found)");
+                styleDialog(dialog);
 
                 VBox dialogContent = new VBox(10);
                 dialogContent.setPadding(new Insets(10));
@@ -265,7 +266,7 @@ public class LoginView {
                         HBox.setHgrow(details, Priority.ALWAYS);
 
                         Button btnSelect = new Button("Select");
-                        btnSelect.setStyle("-fx-background-color: #3b82f6; -fx-text-fill: white; -fx-font-size: 11px; -fx-font-weight: bold; -fx-background-radius: 4; -fx-cursor: hand;");
+                        btnSelect.getStyleClass().add("btn-select-user");
                         btnSelect.setOnAction(e -> {
                             usernameField.setText(user.getUsername());
                             passwordField.requestFocus();
@@ -307,6 +308,7 @@ public class LoginView {
         dialog.initOwner(navigator.getPrimaryStage());
         dialog.setTitle("Delete User Data");
         dialog.setHeaderText("Permanently Delete User Account & Data\n(Requires Password Confirmation)");
+        styleDialog(dialog);
 
         ButtonType deleteButtonType = new ButtonType("Delete Account", ButtonBar.ButtonData.OK_DONE);
         dialog.getDialogPane().getButtonTypes().addAll(deleteButtonType, ButtonType.CANCEL);
@@ -318,13 +320,21 @@ public class LoginView {
 
         TextField targetUsernameField = new TextField(defaultUsername != null ? defaultUsername : "");
         targetUsernameField.setPromptText("Username");
+        targetUsernameField.getStyleClass().add("form-input");
 
         PasswordField verifyPasswordField = new PasswordField();
         verifyPasswordField.setPromptText("Enter account password");
+        verifyPasswordField.getStyleClass().add("form-input");
 
-        grid.add(new Label("Username:"), 0, 0);
+        Label userLabel = new Label("Username:");
+        userLabel.getStyleClass().add("input-label");
+
+        Label passLabel = new Label("Password:");
+        passLabel.getStyleClass().add("input-label");
+
+        grid.add(userLabel, 0, 0);
         grid.add(targetUsernameField, 1, 0);
-        grid.add(new Label("Password:"), 0, 1);
+        grid.add(passLabel, 0, 1);
         grid.add(verifyPasswordField, 1, 1);
 
         dialog.getDialogPane().setContent(grid);
@@ -384,7 +394,19 @@ public class LoginView {
         alert.setTitle(title);
         alert.setHeaderText(null);
         alert.setContentText(message);
+        styleDialog(alert);
         alert.showAndWait();
+    }
+
+    private void styleDialog(Dialog<?> dialog) {
+        if (dialog == null || dialog.getDialogPane() == null) return;
+        String css = getClass().getResource("/styles/app.css") != null 
+                ? getClass().getResource("/styles/app.css").toExternalForm() 
+                : null;
+        if (css != null) {
+            dialog.getDialogPane().getStylesheets().add(css);
+        }
+        dialog.getDialogPane().getStyleClass().add("dark-dialog");
     }
 
     public Pane getView() {

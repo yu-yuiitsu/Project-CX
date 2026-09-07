@@ -52,5 +52,45 @@ public enum SignalingType {
     /**
      * Explicit disconnect/teardown signal.
      */
-    BYE
+    BYE,
+
+    /**
+     * Connection request sent from Peer A to Peer B.
+     */
+    CONNECT_REQUEST,
+
+    /**
+     * Connection accepted signal sent from Peer B to Peer A.
+     */
+    CONNECT_ACCEPT,
+
+    /**
+     * Connection rejected/declined signal sent from Peer B to Peer A.
+     */
+    CONNECT_REJECT,
+
+    /**
+     * Query requesting a peer's currently connected active peers.
+     */
+    PEER_NETWORK_QUERY,
+
+    /**
+     * Response returning a peer's currently connected active peers.
+     */
+    PEER_NETWORK_RESPONSE,
+
+    /**
+     * Request to join a peer's active group connection.
+     */
+    GROUP_JOIN_REQUEST,
+
+    /**
+     * Acceptance of a group join request.
+     */
+    GROUP_JOIN_ACCEPT,
+
+    /**
+     * Introduction of a new peer to other members of an existing group connection.
+     */
+    GROUP_INTRODUCE
 }

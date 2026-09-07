@@ -161,6 +161,29 @@ public class UserRepository {
     }
 
     /**
+     * Retrieves a user by their user ID, username, or display name.
+     */
+    public Optional<User> findByIdOrUsernameOrDisplayName(String term) {
+        if (term == null || term.trim().isEmpty()) return Optional.empty();
+        String sql = "SELECT user_id, username, display_name, status_message, created_at FROM users WHERE user_id = ? OR username = ? OR display_name = ? LIMIT 1;";
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            String trimmed = term.trim();
+            pstmt.setString(1, trimmed);
+            pstmt.setString(2, trimmed);
+            pstmt.setString(3, trimmed);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return Optional.of(mapResultSetToUser(rs));
+                }
+            }
+        } catch (SQLException e) {
+            logger.error("Failed to query user by term: " + term, e);
+        }
+        return Optional.empty();
+    }
+
+    /**
      * Updates the user's status message.
      */
     public boolean updateStatusMessage(String userId, String statusMessage) {

@@ -54,6 +54,9 @@ public class SceneNavigator {
 
         primaryStage.setTitle(title);
         primaryStage.setScene(scene);
+        primaryStage.setWidth(width);
+        primaryStage.setHeight(height);
+        primaryStage.centerOnScreen();
         primaryStage.setMinWidth(420);
         primaryStage.setMinHeight(500);
         primaryStage.show();

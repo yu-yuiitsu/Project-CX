@@ -31,8 +31,8 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class Stage11FullIntegrationTest {
 
-    private static final String DB_A = "chat_stage11_a.db";
-    private static final String DB_B = "chat_stage11_b.db";
+    private static final String DB_A = "target/chat_stage11_a.db";
+    private static final String DB_B = "target/chat_stage11_b.db";
 
     private static final int PORT_A = 19301;
     private static final int PORT_B = 19302;
@@ -54,8 +54,8 @@ class Stage11FullIntegrationTest {
         new File(DB_A).delete();
         new File(DB_B).delete();
 
-        dbManagerA = new DatabaseManager("jdbc:sqlite:" + DB_A);
-        dbManagerB = new DatabaseManager("jdbc:sqlite:" + DB_B);
+        dbManagerA = new DatabaseManager(DB_A);
+        dbManagerB = new DatabaseManager(DB_B);
 
         signalingA = new SignalingManager(PORT_A);
         signalingB = new SignalingManager(PORT_B);
@@ -97,7 +97,11 @@ class Stage11FullIntegrationTest {
         if (dbManagerB != null) dbManagerB.close();
 
         new File(DB_A).delete();
+        new File(DB_A + "-wal").delete();
+        new File(DB_A + "-shm").delete();
         new File(DB_B).delete();
+        new File(DB_B + "-wal").delete();
+        new File(DB_B + "-shm").delete();
     }
 
     @Test

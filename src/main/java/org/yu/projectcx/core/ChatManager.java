@@ -6,6 +6,7 @@ import org.yu.projectcx.db.DatabaseManager;
 import org.yu.projectcx.db.MessageRepository;
 import org.yu.projectcx.db.PeerRepository;
 import org.yu.projectcx.db.UserRepository;
+import org.yu.projectcx.model.ConnectionStatus;
 import org.yu.projectcx.model.FileTransfer;
 import org.yu.projectcx.model.NetworkPayload;
 import org.yu.projectcx.model.Peer;
@@ -15,6 +16,7 @@ import org.yu.projectcx.network.signaling.SignalingManager;
 import org.yu.projectcx.util.AsyncExecutor;
 
 import java.sql.SQLException;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -100,18 +102,289 @@ public class ChatManager {
 
             @Override
             public void onPeerDisconnected(String remotePeerId) {
-                onLanPeerOffline(remotePeerId);
+                handlePeerExplicitDisconnected(remotePeerId);
             }
 
             @Override
             public void onChatMessageReceived(org.yu.projectcx.network.signaling.SignalingMessage msg) {
                 handleIncomingSignalingPeer(msg.getSenderPeerId());
-                receiveIncomingMessageAsync(msg.getSenderPeerId(), msg.getSdp());
+                boolean isGroup = GroupChatSession.GROUP_PEER_ID.equals(msg.getRecipientPeerId());
+                receiveIncomingMessageAsync(msg.getSenderPeerId(), msg.getSdp(), isGroup);
+            }
+
+            @Override
+            public void onConnectionRequestReceived(org.yu.projectcx.network.signaling.SignalingMessage msg) {
+                handleIncomingConnectionRequest(msg.getSenderPeerId(), msg.getSdp());
+            }
+
+            @Override
+            public void onConnectionAccepted(org.yu.projectcx.network.signaling.SignalingMessage msg) {
+                handleIncomingConnectionAccepted(msg.getSenderPeerId(), msg.getSdp());
+            }
+
+            @Override
+            public void onConnectionRejected(org.yu.projectcx.network.signaling.SignalingMessage msg) {
+                handleIncomingConnectionRejected(msg.getSenderPeerId());
+            }
+
+            @Override
+            public void onPeerNetworkQueryReceived(org.yu.projectcx.network.signaling.SignalingMessage msg) {
+                handleIncomingPeerNetworkQuery(msg);
+            }
+
+            @Override
+            public void onPeerNetworkResponseReceived(org.yu.projectcx.network.signaling.SignalingMessage msg) {
+                handleIncomingPeerNetworkResponse(msg);
+            }
+
+            @Override
+            public void onGroupJoinRequestReceived(org.yu.projectcx.network.signaling.SignalingMessage msg) {
+                handleIncomingGroupJoinRequest(msg);
+            }
+
+            @Override
+            public void onGroupIntroduceReceived(org.yu.projectcx.network.signaling.SignalingMessage msg) {
+                handleIncomingGroupIntroduce(msg);
             }
 
             @Override
             public void onSignalingError(String errorMessage, Throwable cause) {}
         });
+    }
+
+    void handleIncomingConnectionRequest(String remotePeerId, String remoteAlias) {
+        if (remotePeerId == null || remotePeerId.isEmpty()) return;
+        if (currentUser != null && (
+                remotePeerId.equals(currentUser.getUserId()) ||
+                remotePeerId.equalsIgnoreCase(currentUser.getUsername()) ||
+                remotePeerId.equalsIgnoreCase(currentUser.getDisplayName()) ||
+                remotePeerId.equalsIgnoreCase("peer_" + currentUser.getUsername())
+        )) {
+            return;
+        }
+
+        String alias = (remoteAlias != null && !remoteAlias.trim().isEmpty()) ? remoteAlias.trim() : remotePeerId;
+        int remotePort = 8888;
+        if (alias.contains(":")) {
+            int colonIdx = alias.lastIndexOf(':');
+            String portStr = alias.substring(colonIdx + 1).trim();
+            try {
+                remotePort = Integer.parseInt(portStr);
+                alias = alias.substring(0, colonIdx).trim();
+            } catch (NumberFormatException ignored) {}
+        }
+        if (alias.isEmpty()) {
+            alias = remotePeerId;
+        }
+
+        final String finalAlias = alias;
+        final int finalRemotePort = remotePort;
+
+        Optional<Peer> existing = peerManager.getAllPeers().stream()
+                .filter(p -> p.getPeerId().equalsIgnoreCase(remotePeerId) 
+                          || p.getAlias().equalsIgnoreCase(remotePeerId)
+                          || p.getAlias().equalsIgnoreCase(finalAlias))
+                .findFirst();
+
+        Peer p;
+        if (existing.isPresent()) {
+            p = existing.get();
+            p.setOnline(true);
+            p.setConnectionStatus(ConnectionStatus.REQUEST_RECEIVED);
+            if (!finalAlias.equals(remotePeerId) && !finalAlias.isEmpty()) p.setAlias(finalAlias);
+            if (finalRemotePort > 0) p.setPort(finalRemotePort);
+            peerManager.addPeer(p);
+        } else {
+            p = new Peer(remotePeerId, finalAlias, "127.0.0.1", finalRemotePort);
+            p.setOnline(true);
+            p.setConnectionStatus(ConnectionStatus.REQUEST_RECEIVED);
+            peerManager.addPeer(p);
+        }
+        try {
+            peerRepository.savePeer(p);
+            peerRepository.updateConnectionStatus(p.getPeerId(), ConnectionStatus.REQUEST_RECEIVED);
+        } catch (SQLException ignored) {}
+
+        logger.info("Incoming connection request from peer: {} ({}) on port {}", p.getAlias(), p.getPeerId(), p.getPort());
+        AsyncExecutor.runOnFxThread(() -> notifyPeersUpdated(peerManager.getAllPeers()));
+    }
+
+    void handleIncomingConnectionAccepted(String remotePeerId) {
+        handleIncomingConnectionAccepted(remotePeerId, null);
+    }
+
+    void handleIncomingConnectionAccepted(String remotePeerId, String remotePortStr) {
+        if (remotePeerId == null || remotePeerId.isEmpty()) return;
+        int remotePort = -1;
+        if (remotePortStr != null && !remotePortStr.trim().isEmpty()) {
+            try {
+                remotePort = Integer.parseInt(remotePortStr.trim());
+            } catch (NumberFormatException ignored) {}
+        }
+
+        Optional<Peer> existing = peerManager.getAllPeers().stream()
+                .filter(p -> p.getPeerId().equalsIgnoreCase(remotePeerId) || p.getAlias().equalsIgnoreCase(remotePeerId))
+                .findFirst();
+
+        Peer p;
+        if (existing.isPresent()) {
+            p = existing.get();
+            p.setOnline(true);
+            p.setConnectionStatus(ConnectionStatus.CONNECTED);
+            if (remotePort > 0) {
+                p.setPort(remotePort);
+            }
+            try {
+                peerRepository.savePeer(p);
+                peerRepository.updateConnectionStatus(p.getPeerId(), ConnectionStatus.CONNECTED);
+            } catch (Exception ignored) {}
+            logger.info("Connection accepted by remote peer: {} ({}) on port {}", p.getAlias(), p.getPeerId(), p.getPort());
+        } else {
+            int finalPort = remotePort > 0 ? remotePort : 8888;
+            p = new Peer(remotePeerId, remotePeerId, "127.0.0.1", finalPort);
+            p.setOnline(true);
+            p.setConnectionStatus(ConnectionStatus.CONNECTED);
+            peerManager.addPeer(p);
+            try {
+                peerRepository.savePeer(p);
+            } catch (SQLException ignored) {}
+            logger.info("Connection accepted by remote peer (registered new): {} ({}) on port {}", p.getAlias(), p.getPeerId(), finalPort);
+        }
+        connectToPeer(p.getPeerId());
+        AsyncExecutor.runOnFxThread(() -> notifyPeersUpdated(peerManager.getAllPeers()));
+    }
+
+    void handleIncomingConnectionRejected(String remotePeerId) {
+        if (remotePeerId == null || remotePeerId.isEmpty()) return;
+        Optional<Peer> existing = peerManager.getAllPeers().stream()
+                .filter(p -> p.getPeerId().equalsIgnoreCase(remotePeerId) || p.getAlias().equalsIgnoreCase(remotePeerId))
+                .findFirst();
+
+        if (existing.isPresent()) {
+            Peer p = existing.get();
+            p.setConnectionStatus(ConnectionStatus.REJECTED);
+            try {
+                peerRepository.updateConnectionStatus(p.getPeerId(), ConnectionStatus.REJECTED);
+            } catch (Exception ignored) {}
+            logger.info("Connection rejected by remote peer: {} ({})", p.getAlias(), p.getPeerId());
+            AsyncExecutor.runOnFxThread(() -> notifyPeersUpdated(peerManager.getAllPeers()));
+        }
+    }
+
+    void handleIncomingGroupJoinRequest(org.yu.projectcx.network.signaling.SignalingMessage msg) {
+        String remotePeerId = msg.getSenderPeerId();
+        String remoteAlias = msg.getSdp();
+        if (remotePeerId == null || remotePeerId.isEmpty()) return;
+
+        handleIncomingConnectionRequest(remotePeerId, remoteAlias);
+        Optional<Peer> p = peerManager.getPeer(remotePeerId);
+        p.ifPresent(peer -> peer.setGroupJoinRequested(true));
+        logger.info("Incoming group join request from peer: {} ({})", remoteAlias, remotePeerId);
+        AsyncExecutor.runOnFxThread(() -> notifyPeersUpdated(peerManager.getAllPeers()));
+    }
+
+    void handleIncomingGroupIntroduce(org.yu.projectcx.network.signaling.SignalingMessage msg) {
+        String payload = msg.getSdp();
+        if (payload == null || payload.trim().isEmpty()) return;
+        String delimiter = payload.contains("||") ? "\\|\\|" : ":";
+        String[] parts = payload.split(delimiter);
+        if (parts.length < 4) return;
+
+        String introducedId = parts[0].trim();
+        String introducedAlias = parts[1].trim();
+        String introducedIp = parts[2].trim();
+        int portParsed;
+        try {
+            portParsed = Integer.parseInt(parts[3].trim());
+        } catch (NumberFormatException e) {
+            portParsed = 8888;
+        }
+        final int introducedPort = portParsed;
+
+        if (currentUser != null && (
+                introducedId.equalsIgnoreCase(currentUser.getUserId()) ||
+                introducedId.equalsIgnoreCase(currentUser.getUsername()) ||
+                introducedAlias.equalsIgnoreCase(currentUser.getUsername()) ||
+                introducedAlias.equalsIgnoreCase(currentUser.getDisplayName()) ||
+                introducedId.equalsIgnoreCase("peer_" + currentUser.getUsername())
+        )) {
+            return;
+        }
+
+        // Register introduced peer in directory as CONNECTED member of group
+        Peer introducedPeer = peerManager.getPeer(introducedId).orElseGet(() -> {
+            Peer np = new Peer(introducedId, introducedAlias, introducedIp, introducedPort);
+            peerManager.addPeer(np);
+            return np;
+        });
+        introducedPeer.setOnline(true);
+        introducedPeer.setConnectionStatus(ConnectionStatus.CONNECTED);
+        introducedPeer.setIpAddress(introducedIp);
+        introducedPeer.setPort(introducedPort);
+        if (!introducedAlias.isEmpty()) {
+            introducedPeer.setAlias(introducedAlias);
+        }
+        try {
+            peerRepository.savePeer(introducedPeer);
+            peerRepository.updateConnectionStatus(introducedPeer.getPeerId(), ConnectionStatus.CONNECTED);
+        } catch (SQLException ignored) {}
+
+        // Add introduced peer to group chat session
+        getGroupChatSession().addMember(introducedPeer);
+
+        logger.info("Auto-connecting to introduced group peer: {} ({}:{})", introducedAlias, introducedIp, introducedPort);
+        connectToPeer(introducedPeer.getPeerId());
+
+        // Acknowledge connection back to introduced peer so both sides are CONNECTED
+        String localId = currentUser != null ? currentUser.getUsername() : "local_user";
+        try {
+            signalingManager.sendConnectionAccept(introducedPeer.getIpAddress(), introducedPeer.getPort(), localId, introducedPeer.getPeerId());
+        } catch (Exception ignored) {}
+
+        AsyncExecutor.runOnFxThread(() -> notifyPeersUpdated(peerManager.getAllPeers()));
+    }
+
+    void handleIncomingPeerNetworkQuery(org.yu.projectcx.network.signaling.SignalingMessage msg) {
+        String requesterId = msg.getSenderPeerId();
+        Peer requester = peerManager.getPeer(requesterId).orElseGet(() -> {
+            return peerManager.getAllPeers().stream()
+                    .filter(p -> p.getPeerId().equalsIgnoreCase(requesterId) || p.getAlias().equalsIgnoreCase(requesterId))
+                    .findFirst()
+                    .orElse(null);
+        });
+        if (requester == null) return;
+
+        String serializedConnected = peerManager.getAllPeers().stream()
+                .filter(p -> p.getConnectionStatus() == ConnectionStatus.CONNECTED && !p.getPeerId().equalsIgnoreCase(requesterId))
+                .map(p -> p.getPeerId() + ":" + p.getAlias() + ":" + p.getIpAddress() + ":" + p.getPort())
+                .collect(java.util.stream.Collectors.joining(";"));
+
+        String localId = currentUser != null ? currentUser.getUsername() : "local_user";
+        try {
+            signalingManager.sendPeerNetworkResponse(requester.getIpAddress(), requester.getPort(), localId, requester.getPeerId(), serializedConnected);
+        } catch (Exception ignored) {}
+    }
+
+    void handleIncomingPeerNetworkResponse(org.yu.projectcx.network.signaling.SignalingMessage msg) {
+        String remotePeerId = msg.getSenderPeerId();
+        Peer remotePeer = peerManager.getPeer(remotePeerId).orElse(null);
+        if (remotePeer == null) return;
+
+        String payload = msg.getSdp();
+        if (payload != null && !payload.trim().isEmpty()) {
+            String[] entries = payload.split("[;,]");
+            List<String> aliases = new ArrayList<>();
+            for (String entry : entries) {
+                String[] parts = entry.split(":");
+                if (parts.length >= 2) {
+                    aliases.add(parts[1].trim());
+                } else if (parts.length == 1 && !parts[0].trim().isEmpty()) {
+                    aliases.add(parts[0].trim());
+                }
+            }
+            remotePeer.setConnectedPeerAliases(aliases);
+            AsyncExecutor.runOnFxThread(() -> notifyPeersUpdated(peerManager.getAllPeers()));
+        }
     }
 
     private void handleIncomingSignalingPeer(String remotePeerId) {
@@ -132,13 +405,9 @@ public class ChatManager {
         if (existing.isPresent()) {
             existing.get().setOnline(true);
         } else {
-            String alias = remotePeerId.startsWith("peer_") ? remotePeerId.substring(5) : remotePeerId;
-            Peer newPeer = new Peer(remotePeerId, alias, "127.0.0.1", 8888);
-            newPeer.setOnline(true);
-            peerManager.addPeer(newPeer);
-            try {
-                peerRepository.savePeer(newPeer);
-            } catch (SQLException ignored) {}
+            // Do NOT create a stub peer here with hardcoded port 8888 — the correct port will arrive
+            // via LAN discovery beacon or a CONNECT_REQUEST message which carries the real port.
+            logger.debug("Received signaling from unknown peer '{}', waiting for LAN discovery to resolve endpoint.", remotePeerId);
         }
 
         AsyncExecutor.runOnFxThread(() -> notifyPeersUpdated(peerManager.getAllPeers()));
@@ -241,6 +510,15 @@ public class ChatManager {
         this.activeSessions.clear();
         if (user != null) {
             logger.info("Active user set in ChatManager: {}", user.getUsername());
+            if (peerRepository != null && signalingManager != null) {
+                try {
+                    int localPort = signalingManager.getLocalPort();
+                    peerRepository.updatePeerEndpoint(user.getUsername(), "127.0.0.1", localPort);
+                    logger.info("Synchronized active local user peer endpoint to DB: {} -> 127.0.0.1:{}", user.getUsername(), localPort);
+                } catch (Exception e) {
+                    logger.warn("Could not synchronize self peer endpoint in DB: {}", e.getMessage());
+                }
+            }
             syncPeersFromDatabase();
             startLanDiscovery(user);
         } else {
@@ -267,6 +545,12 @@ public class ChatManager {
                 public void onPeerOffline(String peerId) {
                     onLanPeerOffline(peerId);
                 }
+            });
+            this.lanDiscoveryService.setConnectedPeersSupplier(() -> {
+                return peerManager.getAllPeers().stream()
+                        .filter(p -> p.getConnectionStatus() == ConnectionStatus.CONNECTED)
+                        .map(Peer::getAlias)
+                        .collect(java.util.stream.Collectors.joining(","));
             });
             this.lanDiscoveryService.start();
         } catch (Exception e) {
@@ -298,29 +582,78 @@ public class ChatManager {
                 .filter(p -> p.getPeerId().equalsIgnoreCase(peer.getPeerId()) || p.getAlias().equalsIgnoreCase(peer.getAlias()))
                 .findFirst();
 
+        boolean stateChanged = false;
         if (existing.isPresent()) {
             Peer p = existing.get();
-            p.setOnline(true);
-            p.setIpAddress(peer.getIpAddress());
-            p.setPort(peer.getPort());
-            p.setAlias(peer.getAlias());
+            if (!p.isOnline()) {
+                p.setOnline(true);
+                stateChanged = true;
+            }
+            if (!peer.getIpAddress().equals(p.getIpAddress()) || peer.getPort() != p.getPort()) {
+                p.setIpAddress(peer.getIpAddress());
+                p.setPort(peer.getPort());
+                stateChanged = true;
+            }
+            if (!p.getAlias().equalsIgnoreCase(peer.getAlias())) {
+                p.setAlias(peer.getAlias());
+                stateChanged = true;
+            }
+            if (peer.hasConnectedPeers() && !peer.getConnectedPeerAliases().equals(p.getConnectedPeerAliases())) {
+                p.setConnectedPeerAliases(peer.getConnectedPeerAliases());
+                stateChanged = true;
+            }
+            p.setLastSeen(LocalDateTime.now());
 
             ChatSession session = activeSessions.get(p.getPeerId());
             if (session != null) {
-                session.getPeer().setPort(peer.getPort());
-                session.getPeer().setIpAddress(peer.getIpAddress());
+                session.getPeer().setPort(p.getPort());
+                session.getPeer().setIpAddress(p.getIpAddress());
                 session.getPeer().setOnline(true);
             }
-            try {
-                peerRepository.savePeer(p);
-            } catch (SQLException ignored) {}
+            if (stateChanged) {
+                try {
+                    peerRepository.savePeer(p);
+                } catch (SQLException ignored) {}
+            }
         } else {
+            peer.setOnline(true);
+            peer.setConnectionStatus(ConnectionStatus.DISCOVERED);
+            peer.setLastSeen(LocalDateTime.now());
             peerManager.addPeer(peer);
             try {
                 peerRepository.savePeer(peer);
             } catch (SQLException ignored) {}
+            stateChanged = true;
         }
-        AsyncExecutor.runOnFxThread(() -> notifyPeersUpdated(peerManager.getAllPeers()));
+        if (stateChanged) {
+            AsyncExecutor.runOnFxThread(() -> notifyPeersUpdated(peerManager.getAllPeers()));
+        }
+    }
+
+    public void handlePeerExplicitDisconnected(String peerId) {
+        if (peerId == null) return;
+        boolean changed = false;
+        for (Peer p : peerManager.getAllPeers()) {
+            if (p.getPeerId().equalsIgnoreCase(peerId) || p.getAlias().equalsIgnoreCase(peerId) || p.getPeerId().equalsIgnoreCase("peer_" + peerId)) {
+                if (p.getConnectionStatus() == ConnectionStatus.CONNECTED) {
+                    p.setConnectionStatus(ConnectionStatus.DISCOVERED);
+                    changed = true;
+                    ChatSession session = activeSessions.remove(p.getPeerId());
+                    if (session != null) {
+                        try { session.closeSession(); } catch (Exception ignored) {}
+                    }
+                    final String pid = p.getPeerId();
+                    AsyncExecutor.runAsyncDb(() -> {
+                        try {
+                            peerRepository.updateConnectionStatus(pid, ConnectionStatus.DISCOVERED);
+                        } catch (Exception ignored) {}
+                    });
+                }
+            }
+        }
+        if (changed) {
+            AsyncExecutor.runOnFxThread(() -> notifyPeersUpdated(peerManager.getAllPeers()));
+        }
     }
 
     public void onLanPeerOffline(String peerId) {
@@ -331,6 +664,12 @@ public class ChatManager {
                 if (p.isOnline()) {
                     p.setOnline(false);
                     changed = true;
+                    final String pid = p.getPeerId();
+                    AsyncExecutor.runAsyncDb(() -> {
+                        try {
+                            peerRepository.updateOnlineStatus(pid, false);
+                        } catch (Exception ignored) {}
+                    });
                 }
             }
         }
@@ -352,20 +691,30 @@ public class ChatManager {
     public void logout() {
         if (currentUser != null) {
             String uid = currentUser.getUsername();
+            String fullUid = currentUser.getUserId();
+            // Mark self offline in shared DB so other instances detect departure via heartbeat
             if (peerRepository != null) {
                 peerRepository.markPeerOffline(uid);
+                peerRepository.markPeerOffline(fullUid);
             }
+            // Broadcast BYE to every known CONNECTED peer so they immediately update their UI
+            for (Peer p : peerManager.getAllPeers()) {
+                if (p.getConnectionStatus() == ConnectionStatus.CONNECTED) {
+                    try {
+                        org.yu.projectcx.network.signaling.SignalingMessage byeMsg =
+                                new org.yu.projectcx.network.signaling.SignalingMessage(
+                                        org.yu.projectcx.network.signaling.SignalingType.BYE,
+                                        uid,
+                                        p.getPeerId()
+                                );
+                        new org.yu.projectcx.network.signaling.SignalingClient()
+                                .sendMessageDirect(p.getIpAddress(), p.getPort(), byeMsg);
+                    } catch (Exception ignored) {}
+                }
+            }
+            // Close all active sessions
             for (ChatSession session : activeSessions.values()) {
-                try {
-                    Peer p = session.getRemotePeer();
-                    org.yu.projectcx.network.signaling.SignalingMessage byeMsg = 
-                            new org.yu.projectcx.network.signaling.SignalingMessage(
-                                    org.yu.projectcx.network.signaling.SignalingType.BYE, 
-                                    uid, 
-                                    p.getPeerId()
-                            );
-                    new org.yu.projectcx.network.signaling.SignalingClient().sendMessageDirect(p.getIpAddress(), p.getPort(), byeMsg);
-                } catch (Exception ignored) {}
+                try { session.closeSession(); } catch (Exception ignored) {}
             }
         }
         stopLanDiscovery();
@@ -393,6 +742,11 @@ public class ChatManager {
             return CompletableFuture.failedFuture(new IllegalArgumentException("Target peer ID cannot be blank."));
         }
 
+        Peer target = peerManager.getPeer(targetPeerId).orElse(null);
+        if (target != null && target.getConnectionStatus() != ConnectionStatus.CONNECTED) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Cannot send message: Peer [" + target.getAlias() + "] is not connected yet (Status: " + target.getConnectionStatus() + ")."));
+        }
+
         return AsyncExecutor.supplyAsyncNetwork(() -> {
             logger.info("Executing sendMessageAsync (network) on thread: {}", Thread.currentThread().getName());
             ChatSession session = getOrCreateSession(targetPeerId);
@@ -415,6 +769,10 @@ public class ChatManager {
      * Dispatches any generic payload asynchronously.
      */
     public CompletableFuture<NetworkPayload> sendMessageAsync(NetworkPayload payload, String targetPeerId) {
+        Peer target = peerManager.getPeer(targetPeerId).orElse(null);
+        if (target != null && target.getConnectionStatus() != ConnectionStatus.CONNECTED) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Cannot send payload: Peer [" + target.getAlias() + "] is not connected yet (Status: " + target.getConnectionStatus() + ")."));
+        }
         return AsyncExecutor.supplyAsyncNetwork(() -> {
             logger.info("Executing generic payload transmission on thread: {}", Thread.currentThread().getName());
             ChatSession session = getOrCreateSession(targetPeerId);
@@ -435,6 +793,10 @@ public class ChatManager {
      * Dispatches a file transfer asynchronously.
      */
     public CompletableFuture<FileTransfer> sendFileAsync(String fileName, long fileSize, String checksum, String mimeType, String targetPeerId) {
+        Peer target = peerManager.getPeer(targetPeerId).orElse(null);
+        if (target != null && target.getConnectionStatus() != ConnectionStatus.CONNECTED) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Cannot send file: Peer [" + target.getAlias() + "] is not connected yet (Status: " + target.getConnectionStatus() + ")."));
+        }
         return AsyncExecutor.supplyAsyncNetwork(() -> {
             logger.info("Executing sendFileAsync on thread: {}", Thread.currentThread().getName());
             ChatSession session = getOrCreateSession(targetPeerId);
@@ -455,12 +817,17 @@ public class ChatManager {
      * Receives an incoming message on a background thread and updates database/UI.
      */
     public CompletableFuture<TextMessage> receiveIncomingMessageAsync(String senderPeerId, String text) {
+        return receiveIncomingMessageAsync(senderPeerId, text, false);
+    }
+
+    public CompletableFuture<TextMessage> receiveIncomingMessageAsync(String senderPeerId, String text, boolean isGroup) {
         return AsyncExecutor.supplyAsyncNetwork(() -> {
             if (currentUser == null) return null;
             logger.info("Processing incoming message on thread: {}", Thread.currentThread().getName());
 
             ChatSession session = getOrCreateSession(senderPeerId);
-            TextMessage incoming = new TextMessage(senderPeerId, currentUser.getUserId(), text);
+            String recipientId = isGroup ? GroupChatSession.GROUP_PEER_ID : currentUser.getUsername();
+            TextMessage incoming = new TextMessage(senderPeerId, recipientId, text);
             session.receivePayload(incoming);
             return incoming;
         });
@@ -484,6 +851,10 @@ public class ChatManager {
     }
 
     public TextMessage sendMessage(String text, String targetPeerId) throws SQLException {
+        Peer target = peerManager.getPeer(targetPeerId).orElse(null);
+        if (target != null && target.getConnectionStatus() != ConnectionStatus.CONNECTED) {
+            throw new IllegalStateException("Cannot send message: Peer [" + target.getAlias() + "] is not connected yet (Status: " + target.getConnectionStatus() + ").");
+        }
         ChatSession session = getOrCreateSession(targetPeerId);
         TextMessage message = session.sendMessage(text);
         messageRepository.saveMessage(message);
@@ -492,6 +863,10 @@ public class ChatManager {
     }
 
     public NetworkPayload sendMessage(NetworkPayload payload, String targetPeerId) throws SQLException {
+        Peer target = peerManager.getPeer(targetPeerId).orElse(null);
+        if (target != null && target.getConnectionStatus() != ConnectionStatus.CONNECTED) {
+            throw new IllegalStateException("Cannot send payload: Peer [" + target.getAlias() + "] is not connected yet (Status: " + target.getConnectionStatus() + ").");
+        }
         ChatSession session = getOrCreateSession(targetPeerId);
         NetworkPayload dispatched = session.sendMessage(payload);
         messageRepository.saveMessage(dispatched);
@@ -500,6 +875,10 @@ public class ChatManager {
     }
 
     public FileTransfer sendFile(String fileName, long fileSize, String checksum, String mimeType, String targetPeerId) throws SQLException {
+        Peer target = peerManager.getPeer(targetPeerId).orElse(null);
+        if (target != null && target.getConnectionStatus() != ConnectionStatus.CONNECTED) {
+            throw new IllegalStateException("Cannot send file: Peer [" + target.getAlias() + "] is not connected yet (Status: " + target.getConnectionStatus() + ").");
+        }
         ChatSession session = getOrCreateSession(targetPeerId);
         FileTransfer fileTx = session.sendFile(fileName, fileSize, checksum, mimeType);
         messageRepository.saveMessage(fileTx);
@@ -508,12 +887,15 @@ public class ChatManager {
     }
 
     public TextMessage receiveIncomingMessage(String senderPeerId, String text) throws SQLException {
+        return receiveIncomingMessage(senderPeerId, text, false);
+    }
+
+    public TextMessage receiveIncomingMessage(String senderPeerId, String text, boolean isGroup) throws SQLException {
         if (currentUser == null) return null;
         ChatSession session = getOrCreateSession(senderPeerId);
-        TextMessage incoming = new TextMessage(senderPeerId, currentUser.getUserId(), text);
+        String recipientId = isGroup ? GroupChatSession.GROUP_PEER_ID : currentUser.getUsername();
+        TextMessage incoming = new TextMessage(senderPeerId, recipientId, text);
         session.receivePayload(incoming);
-        messageRepository.saveMessage(incoming);
-        notifyMessageDispatched(incoming);
         return incoming;
     }
 
@@ -523,22 +905,66 @@ public class ChatManager {
 
     public void selectPeer(String peerId) {
         this.activePeerId = peerId;
-        peerManager.getPeer(peerId).ifPresent(this::notifyPeerSelected);
+        Peer p = peerManager.getPeer(peerId).orElse(null);
+        if (p != null) {
+            notifyPeerSelected(p);
+            if (p.getConnectionStatus() == ConnectionStatus.CONNECTED) {
+                connectToPeer(peerId);
+            }
+            queryPeerConnectedNetwork(peerId);
+        }
+    }
+
+    public CompletableFuture<Boolean> removePeerAsync(String peerId) {
+        return AsyncExecutor.supplyAsyncDb(() -> {
+            if (peerId == null) return false;
+            peerManager.removePeer(peerId);
+            ChatSession s = activeSessions.remove(peerId);
+            if (s != null) {
+                try {
+                    s.closeSession();
+                } catch (Exception ignored) {}
+            }
+            boolean deleted = peerRepository.deletePeer(peerId);
+            AsyncExecutor.runOnFxThread(() -> notifyPeersUpdated(peerManager.getAllPeers()));
+            return deleted;
+        });
     }
 
     public synchronized ChatSession getOrCreateSession(String peerId) {
-        if (activeSessions.containsKey(peerId)) {
-            return activeSessions.get(peerId);
+        if (peerId == null || peerId.trim().isEmpty()) {
+            throw new IllegalArgumentException("peerId cannot be null or empty");
+        }
+        Peer peer = peerManager.getPeer(peerId).orElse(null);
+        String canonicalId = (peer != null) ? peer.getPeerId() : peerId;
+
+        ChatSession existing = activeSessions.get(canonicalId);
+        if (existing == null) {
+            existing = activeSessions.get(peerId);
+        }
+        if (existing == null && peer != null && peer.getAlias() != null) {
+            existing = activeSessions.get(peer.getAlias());
         }
 
-        Peer peer = peerManager.getPeer(peerId).orElseGet(() -> {
+        if (existing != null) {
+            activeSessions.put(canonicalId, existing);
+            activeSessions.put(peerId, existing);
+            if (peer != null && peer.getAlias() != null) {
+                activeSessions.put(peer.getAlias(), existing);
+            }
+            return existing;
+        }
+
+        if (peer == null) {
             Peer fallback = new Peer(peerId, "Peer_" + peerId.substring(0, Math.min(peerId.length(), 6)));
+            fallback.setConnectionStatus(ConnectionStatus.CONNECTED);
             peerManager.addPeer(fallback);
             try {
                 peerRepository.savePeer(fallback);
             } catch (SQLException ignored) {}
-            return fallback;
-        });
+            peer = fallback;
+            canonicalId = peer.getPeerId();
+        }
 
         ChatSession session = new ChatSession(currentUser, peer, signalingManager);
         session.setPayloadListener(new ChatSession.SessionPayloadListener() {
@@ -548,6 +974,11 @@ public class ChatManager {
                     messageRepository.saveMessage(payload);
                 } catch (SQLException e) {
                     logger.error("Failed to persist incoming WebRTC payload to SQLite", e);
+                }
+
+                boolean isGroup = GroupChatSession.GROUP_PEER_ID.equals(payload.getRecipientId());
+                if (isGroup && groupChatSession != null) {
+                    groupChatSession.addGroupPayload(payload);
                 }
 
                 if (payload instanceof TextMessage tm) {
@@ -563,7 +994,11 @@ public class ChatManager {
             }
         });
 
+        activeSessions.put(canonicalId, session);
         activeSessions.put(peerId, session);
+        if (peer.getAlias() != null) {
+            activeSessions.put(peer.getAlias(), session);
+        }
         return session;
     }
 
@@ -573,9 +1008,13 @@ public class ChatManager {
     }
 
     public CompletableFuture<Peer> addPeerAsync(String alias, String ipAddress, int port) {
+        return addPeerAsync(alias, ipAddress, port, ConnectionStatus.CONNECTED);
+    }
+
+    public CompletableFuture<Peer> addPeerAsync(String alias, String ipAddress, int port, ConnectionStatus status) {
         return AsyncExecutor.supplyAsyncDb(() -> {
             try {
-                return addPeer(alias, ipAddress, port);
+                return addPeer(alias, ipAddress, port, status);
             } catch (SQLException e) {
                 throw new RuntimeException("Failed to add peer: " + e.getMessage(), e);
             }
@@ -583,15 +1022,289 @@ public class ChatManager {
     }
 
     public Peer addPeer(String alias, String ipAddress, int port) throws SQLException {
+        return addPeer(alias, ipAddress, port, ConnectionStatus.CONNECTED);
+    }
+
+    public Peer addPeer(String alias, String ipAddress, int port, ConnectionStatus status) throws SQLException {
         String peerId = "peer_" + alias.trim().toLowerCase().replaceAll("\\s+", "_");
         Peer newPeer = new Peer(peerId, alias.trim(), ipAddress.trim(), port);
         newPeer.setOnline(true);
+        newPeer.setConnectionStatus(status != null ? status : ConnectionStatus.CONNECTED);
 
         peerManager.addPeer(newPeer);
         peerRepository.savePeer(newPeer);
 
         AsyncExecutor.runOnFxThread(() -> notifyPeersUpdated(peerManager.getAllPeers()));
         return newPeer;
+    }
+
+    public CompletableFuture<Boolean> sendConnectionRequest(String peerId) {
+        return AsyncExecutor.supplyAsyncNetwork(() -> {
+            Peer target = peerManager.getPeer(peerId).orElse(null);
+            if (target == null) {
+                logger.warn("sendConnectionRequest: peer '{}' not found in peerManager", peerId);
+                return false;
+            }
+
+            target.setConnectionStatus(ConnectionStatus.REQUEST_SENT);
+            peerRepository.updateConnectionStatus(target.getPeerId(), ConnectionStatus.REQUEST_SENT);
+
+            // Use username so the receiver can reliably map to discovered peer and DB records
+            String localId = currentUser != null ? currentUser.getUsername() : "local_user";
+            String localAlias = currentUser != null ? currentUser.getDisplayName() : localId;
+            int localPort = signalingManager != null ? signalingManager.getLocalPort() : 8888;
+            String targetIp = target.getIpAddress();
+            int targetPort = target.getPort();
+
+            logger.info("Sending connection request: local={}({}) -> target={}({}:{})",
+                    localAlias, localPort, target.getAlias(), targetIp, targetPort);
+
+            try {
+                // Await the async future so errors surface immediately
+                signalingManager.sendConnectionRequest(targetIp, targetPort, localId, target.getPeerId(), localAlias + ":" + localPort).get();
+                logger.info("✅ Connection request delivered to {} ({}:{})", target.getAlias(), targetIp, targetPort);
+            } catch (Exception e) {
+                logger.error("❌ Failed to send connection request to {} ({}:{}) - {}", target.getAlias(), targetIp, targetPort, e.getMessage());
+                // Don't revert status - user can retry
+            }
+
+            AsyncExecutor.runOnFxThread(() -> notifyPeersUpdated(peerManager.getAllPeers()));
+            return true;
+        });
+    }
+
+    public CompletableFuture<Boolean> acceptConnectionRequest(String peerId) {
+        return AsyncExecutor.supplyAsyncNetwork(() -> {
+            Peer target = peerManager.getPeer(peerId).orElse(null);
+            if (target == null) {
+                logger.warn("acceptConnectionRequest: peer '{}' not found", peerId);
+                return false;
+            }
+
+            target.setConnectionStatus(ConnectionStatus.CONNECTED);
+            peerRepository.updateConnectionStatus(target.getPeerId(), ConnectionStatus.CONNECTED);
+
+            String localId = currentUser != null ? currentUser.getUsername() : "local_user";
+            int localPort = signalingManager != null ? signalingManager.getLocalPort() : 8888;
+
+            logger.info("Accepting connection request from {} ({}:{}) - sending ACCEPT with port {}",
+                    target.getAlias(), target.getIpAddress(), target.getPort(), localPort);
+
+            try {
+                signalingManager.sendConnectionAccept(target.getIpAddress(), target.getPort(), localId, target.getPeerId(), localPort).get();
+                logger.info("✅ Connection accept delivered to {} ({}:{})", target.getAlias(), target.getIpAddress(), target.getPort());
+            } catch (Exception e) {
+                logger.error("❌ Failed to send connection accept to {} ({}:{}) - {}", target.getAlias(), target.getIpAddress(), target.getPort(), e.getMessage());
+            }
+
+            getOrCreateSession(target.getPeerId());
+            AsyncExecutor.runOnFxThread(() -> notifyPeersUpdated(peerManager.getAllPeers()));
+            return true;
+        });
+    }
+
+    public CompletableFuture<Boolean> rejectConnectionRequest(String peerId) {
+        return AsyncExecutor.supplyAsyncNetwork(() -> {
+            Peer target = peerManager.getPeer(peerId).orElse(null);
+            if (target == null) return false;
+
+            target.setConnectionStatus(ConnectionStatus.REJECTED);
+            peerRepository.updateConnectionStatus(target.getPeerId(), ConnectionStatus.REJECTED);
+
+            String localId = currentUser != null ? currentUser.getUsername() : "local_user";
+
+            try {
+                signalingManager.sendConnectionReject(target.getIpAddress(), target.getPort(), localId, target.getPeerId()).get();
+                logger.info("Connection reject sent to {} ({}:{})", target.getAlias(), target.getIpAddress(), target.getPort());
+            } catch (Exception e) {
+                logger.error("❌ Failed to send connection reject to {} - {}", target.getAlias(), e.getMessage());
+            }
+
+            AsyncExecutor.runOnFxThread(() -> notifyPeersUpdated(peerManager.getAllPeers()));
+            return true;
+        });
+    }
+
+    public CompletableFuture<Boolean> disconnectPeer(String peerId) {
+        return AsyncExecutor.supplyAsyncNetwork(() -> {
+            Peer target = peerManager.getPeer(peerId).orElse(null);
+            if (target == null) return false;
+
+            target.setConnectionStatus(ConnectionStatus.DISCOVERED);
+            peerRepository.updateConnectionStatus(target.getPeerId(), ConnectionStatus.DISCOVERED);
+
+            ChatSession session = activeSessions.remove(target.getPeerId());
+            if (session != null) {
+                try { session.closeSession(); } catch (Exception ignored) {}
+            }
+
+            String localId = currentUser != null ? currentUser.getUsername() : "local_user";
+            try {
+                org.yu.projectcx.network.signaling.SignalingMessage byeMsg =
+                        new org.yu.projectcx.network.signaling.SignalingMessage(
+                                org.yu.projectcx.network.signaling.SignalingType.BYE,
+                                localId,
+                                target.getPeerId()
+                        );
+                new org.yu.projectcx.network.signaling.SignalingClient()
+                        .sendMessageDirect(target.getIpAddress(), target.getPort(), byeMsg);
+                logger.info("Sent disconnect (BYE) to peer: {} ({}:{})", target.getAlias(), target.getIpAddress(), target.getPort());
+            } catch (Exception e) {
+                logger.debug("Failed sending BYE to {}: {}", target.getAlias(), e.getMessage());
+            }
+
+            AsyncExecutor.runOnFxThread(() -> notifyPeersUpdated(peerManager.getAllPeers()));
+            return true;
+        });
+    }
+
+    public CompletableFuture<Boolean> sendGroupJoinRequest(String peerId) {
+        return AsyncExecutor.supplyAsyncNetwork(() -> {
+            Peer target = peerManager.getPeer(peerId).orElse(null);
+            if (target == null) return false;
+
+            target.setConnectionStatus(ConnectionStatus.REQUEST_SENT);
+            target.setGroupJoinRequested(true);
+            peerRepository.updateConnectionStatus(target.getPeerId(), ConnectionStatus.REQUEST_SENT);
+
+            String localId = currentUser != null ? currentUser.getUsername() : "local_user";
+            String localAlias = currentUser != null ? currentUser.getDisplayName() : localId;
+            int localPort = signalingManager != null ? signalingManager.getLocalPort() : 8888;
+
+            try {
+                signalingManager.sendGroupJoinRequest(target.getIpAddress(), target.getPort(), localId, target.getPeerId(), localAlias + ":" + localPort);
+                logger.info("Sent group join request to {} ({}:{})", target.getAlias(), target.getIpAddress(), target.getPort());
+            } catch (Exception e) {
+                logger.warn("Could not dispatch group join request to {}: {}", target.getEndpoint(), e.getMessage());
+            }
+
+            AsyncExecutor.runOnFxThread(() -> notifyPeersUpdated(peerManager.getAllPeers()));
+            return true;
+        });
+    }
+
+    public CompletableFuture<Boolean> acceptGroupJoinRequest(String peerId) {
+        return AsyncExecutor.supplyAsyncNetwork(() -> {
+            Peer requester = peerManager.getPeer(peerId).orElse(null);
+            if (requester == null) return false;
+
+            // 1. Accept requester locally
+            acceptConnectionRequest(peerId).join();
+            requester.setGroupJoinRequested(false);
+
+            // 2. Introduce requester to all other currently connected peers, and vice-versa
+            String localId = currentUser != null ? currentUser.getUsername() : "local_user";
+            String requesterPayload = requester.getPeerId() + ":" + requester.getAlias() + ":" + requester.getIpAddress() + ":" + requester.getPort();
+
+            for (Peer member : peerManager.getAllPeers()) {
+                if (!member.getPeerId().equalsIgnoreCase(requester.getPeerId())
+                        && member.getConnectionStatus() == ConnectionStatus.CONNECTED) {
+                    try {
+                        // Introduce new requester to existing member
+                        signalingManager.sendGroupIntroduce(member.getIpAddress(), member.getPort(), localId, member.getPeerId(), requesterPayload);
+                        logger.info("Introduced group peer {} to existing member {}", requester.getAlias(), member.getAlias());
+
+                        // Introduce existing member to new requester
+                        String memberPayload = member.getPeerId() + ":" + member.getAlias() + ":" + member.getIpAddress() + ":" + member.getPort();
+                        signalingManager.sendGroupIntroduce(requester.getIpAddress(), requester.getPort(), localId, requester.getPeerId(), memberPayload);
+                        logger.info("Introduced existing member {} to new group peer {}", member.getAlias(), requester.getAlias());
+                    } catch (Exception e) {
+                        logger.warn("Failed introducing {} with {}: {}", requester.getAlias(), member.getAlias(), e.getMessage());
+                    }
+                }
+            }
+
+            AsyncExecutor.runOnFxThread(() -> notifyPeersUpdated(peerManager.getAllPeers()));
+            return true;
+        });
+    }
+
+    public void queryPeerConnectedNetwork(String peerId) {
+        Peer target = peerManager.getPeer(peerId).orElse(null);
+        if (target == null) return;
+        String localId = currentUser != null ? currentUser.getUsername() : "local_user";
+        try {
+            signalingManager.sendPeerNetworkQuery(target.getIpAddress(), target.getPort(), localId, target.getPeerId());
+        } catch (Exception ignored) {}
+    }
+
+    private GroupChatSession groupChatSession;
+
+    public synchronized GroupChatSession getGroupChatSession() {
+        if (groupChatSession == null) {
+            groupChatSession = new GroupChatSession(currentUser, this);
+        }
+        groupChatSession.syncMembers(peerManager.getAllPeers());
+        return groupChatSession;
+    }
+
+    public CompletableFuture<GroupChatSession> createGroupChat(String groupName, List<String> peerIds) {
+        return AsyncExecutor.supplyAsyncNetwork(() -> {
+            GroupChatSession session = getGroupChatSession();
+            if (groupName != null && !groupName.trim().isEmpty()) {
+                session.setGroupName(groupName.trim());
+            }
+
+            List<Peer> designated = new ArrayList<>();
+            for (String pid : peerIds) {
+                Peer p = peerManager.getPeer(pid).orElse(null);
+                if (p != null) {
+                    designated.add(p);
+                    if (p.getConnectionStatus() != ConnectionStatus.CONNECTED) {
+                        sendConnectionRequest(p.getPeerId());
+                    }
+                }
+            }
+
+            // Introduce members to each other if 2 or more
+            String localId = currentUser != null ? currentUser.getUsername() : "local_user";
+            for (int i = 0; i < designated.size(); i++) {
+                Peer p1 = designated.get(i);
+                for (int j = i + 1; j < designated.size(); j++) {
+                    Peer p2 = designated.get(j);
+                    try {
+                        String p2Payload = p2.getPeerId() + ":" + p2.getAlias() + ":" + p2.getIpAddress() + ":" + p2.getPort();
+                        signalingManager.sendGroupIntroduce(p1.getIpAddress(), p1.getPort(), localId, p1.getPeerId(), p2Payload);
+                        String p1Payload = p1.getPeerId() + ":" + p1.getAlias() + ":" + p1.getIpAddress() + ":" + p1.getPort();
+                        signalingManager.sendGroupIntroduce(p2.getIpAddress(), p2.getPort(), localId, p2.getPeerId(), p1Payload);
+                    } catch (Exception ignored) {}
+                }
+            }
+
+            session.setMembers(designated);
+            AsyncExecutor.runOnFxThread(() -> notifyPeersUpdated(peerManager.getAllPeers()));
+            return session;
+        });
+    }
+
+    public CompletableFuture<List<TextMessage>> sendGroupMessageAsync(String text) {
+        return getGroupChatSession().broadcastTextMessageAsync(text);
+    }
+
+    public CompletableFuture<TextMessage> sendGroupPayloadToPeerAsync(TextMessage groupMsg, String targetPeerId) {
+        Peer target = peerManager.getPeer(targetPeerId).orElse(null);
+        if (target != null && target.getConnectionStatus() != ConnectionStatus.CONNECTED) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Cannot send group message: Peer [" + target.getAlias() + "] is not connected yet (Status: " + target.getConnectionStatus() + ")."));
+        }
+        return AsyncExecutor.supplyAsyncNetwork(() -> {
+            logger.info("Executing sendGroupPayloadToPeerAsync to [{}] on thread: {}", targetPeerId, Thread.currentThread().getName());
+            ChatSession session = getOrCreateSession(targetPeerId);
+            session.sendMessage(groupMsg);
+            return groupMsg;
+        });
+    }
+
+    public CompletableFuture<List<NetworkPayload>> getGroupConversationHistoryAsync() {
+        return AsyncExecutor.supplyAsyncDb(() -> messageRepository.getGroupConversation(GroupChatSession.GROUP_PEER_ID));
+    }
+
+    public CompletableFuture<Boolean> clearGroupChatHistory() {
+        return AsyncExecutor.supplyAsyncDb(() -> {
+            if (groupChatSession != null) {
+                groupChatSession.clearHistory();
+            }
+            return messageRepository.clearGroupConversation(GroupChatSession.GROUP_PEER_ID);
+        });
     }
 
     public void syncPeersFromDatabase() {
@@ -618,7 +1331,21 @@ public class ChatManager {
     }
 
     public Optional<Peer> getPeer(String peerId) {
-        return peerManager.getPeer(peerId);
+        if (peerId == null) return Optional.empty();
+        Optional<Peer> direct = peerManager.getPeer(peerId);
+        if (direct.isPresent()) return direct;
+        try {
+            Optional<User> u = userRepository.findByIdOrUsernameOrDisplayName(peerId);
+            if (u.isPresent()) {
+                Optional<Peer> byUser = peerManager.getPeer(u.get().getUsername());
+                if (byUser.isPresent()) return byUser;
+                byUser = peerManager.getPeer(u.get().getDisplayName());
+                if (byUser.isPresent()) return byUser;
+                Peer fallback = new Peer(u.get().getUsername(), u.get().getDisplayName(), "Offline", 0);
+                return Optional.of(fallback);
+            }
+        } catch (Exception ignored) {}
+        return Optional.empty();
     }
 
     public String getActivePeerId() {
@@ -654,6 +1381,12 @@ public class ChatManager {
 
     public synchronized void shutdown() {
         logger.info("Shutting down ChatManager and disposing active sessions...");
+        stopLanDiscovery();
+        if (signalingManager != null) {
+            try {
+                signalingManager.stop();
+            } catch (Exception ignored) {}
+        }
         for (ChatSession session : activeSessions.values()) {
             try {
                 session.closeSession();
@@ -663,13 +1396,13 @@ public class ChatManager {
         eventListeners.clear();
     }
 
-    private void notifyMessageDispatched(TextMessage message) {
+    public void notifyMessageDispatched(TextMessage message) {
         for (ChatEventListener listener : new ArrayList<>(eventListeners)) {
             listener.onMessageDispatched(message);
         }
     }
 
-    private void notifyPayloadDispatched(NetworkPayload payload) {
+    public void notifyPayloadDispatched(NetworkPayload payload) {
         for (ChatEventListener listener : new ArrayList<>(eventListeners)) {
             listener.onPayloadDispatched(payload);
         }

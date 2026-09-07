@@ -34,6 +34,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Manages the native WebRTC PeerConnection, DataChannel lifecycle, and P2P streaming.
@@ -56,6 +57,8 @@ public class WebRTCManager implements SignalingEventListener {
     private final int remotePort;
     private final SignalingManager signalingManager;
     private final List<WebRTCDataChannelListener> listeners;
+    private final AtomicBoolean isClosed;
+    private final AtomicBoolean isConnecting;
 
     private PeerConnectionFactory factory;
     private RTCPeerConnection peerConnection;
@@ -80,6 +83,8 @@ public class WebRTCManager implements SignalingEventListener {
         this.remotePort = remotePort;
         this.signalingManager = signalingManager;
         this.listeners = new CopyOnWriteArrayList<>();
+        this.isClosed = new AtomicBoolean(false);
+        this.isConnecting = new AtomicBoolean(false);
 
         if (signalingManager != null) {
             signalingManager.addListener(this);
@@ -138,12 +143,17 @@ public class WebRTCManager implements SignalingEventListener {
      * Initiates connection as the Caller (creates DataChannel and sends SDP Offer).
      */
     public void createConnectionAsCaller() {
-        if (peerConnection == null || isDataChannelOpen()) return;
+        if (peerConnection == null || isDataChannelOpen() || isClosed.get()) return;
+        if (!isConnecting.compareAndSet(false, true)) {
+            logger.debug("createConnectionAsCaller already in progress for peer [{}]", remotePeerId);
+            return;
+        }
 
         AsyncExecutor.runAsyncNetwork(() -> {
             try {
                 if (peerConnection.getSignalingState() != RTCSignalingState.STABLE) {
                     logger.debug("createConnectionAsCaller skipped: signaling state is {}", peerConnection.getSignalingState());
+                    isConnecting.set(false);
                     return;
                 }
                 // 1. Create DataChannel
@@ -170,6 +180,7 @@ public class WebRTCManager implements SignalingEventListener {
                             @Override
                             public void onFailure(String error) {
                                 logger.error("Failed to set local description: {}", error);
+                                isConnecting.set(false);
                             }
                         };
                         peerConnection.setLocalDescription(offerDescription, offerSetLocalObserver);
@@ -178,6 +189,7 @@ public class WebRTCManager implements SignalingEventListener {
                     @Override
                     public void onFailure(String error) {
                         logger.error("Failed to create SDP Offer: {}", error);
+                        isConnecting.set(false);
                     }
                 };
                 peerConnection.createOffer(options, this.offerCreateObserver);
@@ -305,6 +317,9 @@ public class WebRTCManager implements SignalingEventListener {
                     if (dataChannel != null) {
                         RTCDataChannelState state = dataChannel.getState();
                         logger.info("⚡ WebRTC DataChannel state: {}", state);
+                        if (state == RTCDataChannelState.OPEN || state == RTCDataChannelState.CLOSED) {
+                            isConnecting.set(false);
+                        }
                         notifyDataChannelStateChange(state);
                     }
                 } catch (Exception ignored) {}
@@ -368,34 +383,54 @@ public class WebRTCManager implements SignalingEventListener {
     }
 
     public boolean isDataChannelOpen() {
-        return dataChannel != null && dataChannel.getState() == RTCDataChannelState.OPEN;
+        if (isClosed.get()) return false;
+        RTCDataChannel dc = this.dataChannel;
+        if (dc == null) return false;
+        try {
+            return dc.getState() == RTCDataChannelState.OPEN;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    public boolean isConnecting() {
+        return isConnecting.get();
     }
 
     public RTCDataChannelState getDataChannelState() {
-        return dataChannel != null ? dataChannel.getState() : RTCDataChannelState.CLOSED;
+        if (isClosed.get()) return RTCDataChannelState.CLOSED;
+        RTCDataChannel dc = this.dataChannel;
+        if (dc == null) return RTCDataChannelState.CLOSED;
+        try {
+            return dc.getState();
+        } catch (Throwable t) {
+            return RTCDataChannelState.CLOSED;
+        }
     }
 
     public void close() {
+        if (!isClosed.compareAndSet(false, true)) {
+            return;
+        }
         logger.info("Closing WebRTCManager for peer [{}]", remotePeerId);
         if (signalingManager != null) {
             signalingManager.removeListener(this);
         }
-        if (dataChannel != null) {
+        RTCDataChannel dc = this.dataChannel;
+        this.dataChannel = null;
+        if (dc != null) {
             try {
-                dataChannel.close();
-                dataChannel.dispose();
-            } catch (Exception ignored) {}
+                dc.close();
+            } catch (Throwable ignored) {}
         }
-        if (peerConnection != null) {
+        RTCPeerConnection pc = this.peerConnection;
+        this.peerConnection = null;
+        if (pc != null) {
             try {
-                peerConnection.close();
-            } catch (Exception ignored) {}
+                pc.close();
+            } catch (Throwable ignored) {}
         }
-        if (factory != null) {
-            try {
-                factory.dispose();
-            } catch (Exception ignored) {}
-        }
+        this.factory = null;
     }
 
     // ==========================================
@@ -403,10 +438,14 @@ public class WebRTCManager implements SignalingEventListener {
     // ==========================================
 
     private boolean isMatchingPeer(String senderId) {
-        if (senderId == null) return false;
-        String s1 = remotePeerId.toLowerCase().replaceAll("[^a-z0-9]", "");
-        String s2 = senderId.toLowerCase().replaceAll("[^a-z0-9]", "");
-        return s1.equals(s2) || s1.contains(s2) || s2.contains(s1);
+        if (senderId == null || remotePeerId == null) return false;
+        if (remotePeerId.equalsIgnoreCase(senderId)) return true;
+        String s1 = remotePeerId.toLowerCase().replaceAll("[^a-z0-9_]", "");
+        String s2 = senderId.toLowerCase().replaceAll("[^a-z0-9_]", "");
+        if (s1.equals(s2)) return true;
+        String clean1 = s1.replace("peer_", "").replace("peer", "");
+        String clean2 = s2.replace("peer_", "").replace("peer", "");
+        return clean1.equals(clean2);
     }
 
     @Override

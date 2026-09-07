@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class DatabaseManagerTest {
 
-    private static final String TEST_DB = "test_projectcx.db";
+    private static final String TEST_DB = "target/test_projectcx.db";
     private DatabaseManager dbManager;
 
     @BeforeEach

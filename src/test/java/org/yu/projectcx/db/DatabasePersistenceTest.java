@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class DatabasePersistenceTest {
 
-    private static final String TEST_DB_FILE = "chat_stage5_test.db";
+    private static final String TEST_DB_FILE = "target/chat_stage5_test.db";
     private DatabaseManager dbManager;
     private UserRepository userRepo;
     private PeerRepository peerRepo;

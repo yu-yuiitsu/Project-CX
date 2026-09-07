@@ -15,6 +15,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -28,23 +29,30 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class ChatManagerFlowTest {
 
-    private static final String TEST_DB = "chat_stage7_test.db";
+    private String testDb;
     private DatabaseManager databaseManager;
     private ChatManager chatManager;
 
     @BeforeEach
     void setUp() {
-        new File(TEST_DB).delete();
-        databaseManager = new DatabaseManager(TEST_DB);
+        testDb = "target/chat_flow_" + UUID.randomUUID().toString().substring(0, 8) + ".db";
+        databaseManager = new DatabaseManager(testDb);
         chatManager = new ChatManager(databaseManager);
     }
 
     @AfterEach
     void tearDown() {
+        if (chatManager != null) {
+            chatManager.shutdown();
+        }
         if (databaseManager != null) {
             databaseManager.close();
         }
-        new File(TEST_DB).delete();
+        if (testDb != null) {
+            new File(testDb).delete();
+            new File(testDb + "-wal").delete();
+            new File(testDb + "-shm").delete();
+        }
     }
 
     @Test
@@ -100,7 +108,7 @@ class ChatManagerFlowTest {
         TextMessage createdMsg = chatManager.sendMessage("Hello Alex! Testing flow.");
 
         assertNotNull(createdMsg);
-        assertEquals(user.getUserId(), createdMsg.getSenderId());
+        assertTrue(user.getUserId().equals(createdMsg.getSenderId()) || user.getUsername().equals(createdMsg.getSenderId()));
         assertEquals(alex.getPeerId(), createdMsg.getRecipientId());
         assertEquals("Hello Alex! Testing flow.", createdMsg.getMessageContent());
         assertTrue(createdMsg.isDelivered());

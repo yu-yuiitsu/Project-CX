@@ -45,7 +45,8 @@ public class ChatSession {
 
     // Composition
     private final MessageManager messageManager;
-    private final WebRTCManager webrtcManager;
+    private final SignalingManager signalingManager;
+    private WebRTCManager webrtcManager;
 
     private SessionState state;
     private SessionPayloadListener payloadListener;
@@ -78,8 +79,22 @@ public class ChatSession {
 
         this.localUser = localUser;
         this.remotePeer = remotePeer;
+        this.signalingManager = signalingManager;
 
         this.messageManager = new MessageManager();
+        initWebRtcManager();
+
+        this.state = SessionState.INITIALIZING;
+        logger.info("ChatSession [{}] created between User [{}] and Peer [{}]",
+                sessionId, localUser.getUsername(), remotePeer.getAlias());
+    }
+
+    private void initWebRtcManager() {
+        if (this.webrtcManager != null) {
+            try {
+                this.webrtcManager.close();
+            } catch (Throwable ignored) {}
+        }
         this.webrtcManager = new WebRTCManager(
                 localUser.getUsername(),
                 remotePeer.getPeerId(),
@@ -97,6 +112,7 @@ public class ChatSession {
                     state = SessionState.ACTIVE;
                     remotePeer.setOnline(true);
                 } else if (dcState == RTCDataChannelState.CLOSED) {
+                    state = SessionState.CLOSED;
                     remotePeer.setOnline(false);
                 }
                 if (payloadListener != null) {
@@ -115,10 +131,6 @@ public class ChatSession {
                 logger.error("Session [{}] WebRTC error: {}", sessionId, errorMessage, cause);
             }
         });
-
-        this.state = SessionState.INITIALIZING;
-        logger.info("ChatSession [{}] created between User [{}] and Peer [{}]",
-                sessionId, localUser.getUsername(), remotePeer.getAlias());
     }
 
     /**
@@ -126,7 +138,19 @@ public class ChatSession {
      */
     public synchronized void connect() {
         if (state == SessionState.CLOSED) {
-            throw new IllegalStateException("Cannot reconnect a closed ChatSession.");
+            logger.info("Session [{}] was CLOSED, re-initializing WebRTC subsystem for reconnect...", sessionId);
+            initWebRtcManager();
+            this.state = SessionState.INITIALIZING;
+        }
+        if (webrtcManager != null && (webrtcManager.isDataChannelOpen() || webrtcManager.isConnecting())) {
+            this.state = SessionState.ACTIVE;
+            this.remotePeer.setOnline(true);
+            logger.debug("Session [{}] WebRTC DataChannel is already OPEN or negotiating.", sessionId);
+            return;
+        }
+        if (state == SessionState.CONNECTING) {
+            logger.debug("Session [{}] is already CONNECTING - skipping redundant connect", sessionId);
+            return;
         }
         this.state = SessionState.CONNECTING;
         logger.info("Connecting session [{}] to peer endpoint: {}", sessionId, remotePeer.getEndpoint());
@@ -157,11 +181,13 @@ public class ChatSession {
      * Overload 2: Dispatches an outgoing text message with delivery receipt control.
      */
     public synchronized TextMessage sendMessage(String text, boolean requireDeliveryReceipt) {
-        if (state != SessionState.ACTIVE && state != SessionState.INITIALIZING && state != SessionState.CONNECTING) {
-            throw new IllegalStateException("Cannot send message. Session is " + state);
+        if (state == SessionState.CLOSED || state == SessionState.PAUSED) {
+            try {
+                connect();
+            } catch (Exception ignored) {}
         }
 
-        TextMessage message = new TextMessage(localUser.getUserId(), remotePeer.getPeerId(), text);
+        TextMessage message = new TextMessage(localUser.getUsername(), remotePeer.getPeerId(), text);
         message.setDelivered(requireDeliveryReceipt);
         message.validate();
 
@@ -198,8 +224,10 @@ public class ChatSession {
      * Overload 3: Dispatches any generic / polymorphic NetworkPayload.
      */
     public synchronized NetworkPayload sendMessage(NetworkPayload payload) {
-        if (state != SessionState.ACTIVE && state != SessionState.INITIALIZING && state != SessionState.CONNECTING) {
-            throw new IllegalStateException("Cannot send payload. Session is " + state);
+        if (state == SessionState.CLOSED || state == SessionState.PAUSED) {
+            try {
+                connect();
+            } catch (Exception ignored) {}
         }
         if (payload == null) {
             throw new IllegalArgumentException("Cannot send a null payload.");
@@ -210,6 +238,23 @@ public class ChatSession {
 
         if (webrtcManager.isDataChannelOpen()) {
             webrtcManager.sendPayload(payload);
+        } else {
+            // Direct signaling fallback for TextMessage if DataChannel is not open
+            if (payload instanceof TextMessage tm) {
+                if (state != SessionState.CONNECTING && state != SessionState.ACTIVE) {
+                    try { connect(); } catch (Exception ignored) {}
+                }
+                String recipient = tm.getRecipientId();
+                SignalingMessage chatSigMsg = new SignalingMessage(SignalingType.CHAT_MESSAGE, localUser.getUsername(), recipient, tm.getMessageContent());
+                AsyncExecutor.runAsyncNetwork(() -> {
+                    try {
+                        new SignalingClient().sendMessageDirect(remotePeer.getIpAddress(), remotePeer.getPort(), chatSigMsg);
+                        logger.info("Session [{}] dispatched payload via direct signaling socket to {}:{}", sessionId, remotePeer.getIpAddress(), remotePeer.getPort());
+                    } catch (Exception e) {
+                        logger.warn("Direct signaling socket send error to {}:{} - {}", remotePeer.getIpAddress(), remotePeer.getPort(), e.getMessage());
+                    }
+                });
+            }
         }
 
         logger.info("Session [{}] generic payload sent: [{}] {}", sessionId, payload.getType(), payload.getSummary());
@@ -232,11 +277,11 @@ public class ChatSession {
      * Overload 2: Dispatches a file transfer with standard filename and size.
      */
     public synchronized FileTransfer sendFile(String fileName, long fileSize) {
-        return sendFile(fileName, fileSize, "", "application/octet-stream");
+        return sendFile(fileName, fileSize, null, "application/octet-stream");
     }
 
     /**
-     * Overload 3: Dispatches a file transfer with complete checksum and MIME details.
+     * Overload 3: Dispatches a file transfer with integrity checksum and MIME type.
      */
     public synchronized FileTransfer sendFile(String fileName, long fileSize, String checksum, String mimeType) {
         FileTransfer fileTransfer = new FileTransfer(
@@ -255,11 +300,18 @@ public class ChatSession {
      */
     public synchronized void receivePayload(NetworkPayload payload) {
         if (payload == null) return;
-        payload.setSenderId(remotePeer.getPeerId());
-        payload.setRecipientId(localUser.getUserId());
+        boolean isGroup = GroupChatSession.GROUP_PEER_ID.equals(payload.getRecipientId());
+        if (!isGroup) {
+            payload.setSenderId(remotePeer.getPeerId());
+            payload.setRecipientId(localUser.getUsername());
+        } else {
+            if (payload.getSenderId() == null || payload.getSenderId().trim().isEmpty()) {
+                payload.setSenderId(remotePeer.getPeerId());
+            }
+        }
         payload.validate();
         messageManager.addMessage(payload);
-        logger.info("Session [{}] received incoming payload: {}", sessionId, payload.getPayloadId());
+        logger.info("Session [{}] received incoming payload: {} (isGroup: {})", sessionId, payload.getPayloadId(), isGroup);
 
         if (payloadListener != null) {
             payloadListener.onPayloadReceived(payload);

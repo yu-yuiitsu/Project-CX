@@ -83,7 +83,8 @@ public class DatabaseManager implements AutoCloseable {
                 ip_address TEXT DEFAULT '127.0.0.1',
                 port INTEGER DEFAULT 8080,
                 is_online INTEGER DEFAULT 0,
-                last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+                last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+                connection_status TEXT DEFAULT 'DISCOVERED'
             );
         """;
 
@@ -122,7 +123,15 @@ public class DatabaseManager implements AutoCloseable {
             stmt.execute(createPeersTable);
             stmt.execute(createMessagesTable);
             stmt.execute(createSettingsTable);
-            stmt.execute("DELETE FROM peers WHERE alias LIKE 'Peer:%';");
+            stmt.execute("DELETE FROM peers WHERE alias LIKE 'Peer:%' OR peer_id LIKE 'test_%' OR alias LIKE 'test_%' OR peer_id IN ('alice', 'bob', 'charlie') OR alias IN ('alice', 'bob', 'charlie');");
+
+            // Migration: Add connection_status column if upgrading existing schema
+            try {
+                stmt.execute("ALTER TABLE peers ADD COLUMN connection_status TEXT DEFAULT 'DISCOVERED';");
+            } catch (SQLException ignored) {
+                // Column already exists
+            }
+
             logger.info("All SQLite schema tables (users, peers, messages, app_settings) initialized successfully.");
         } catch (SQLException e) {
             logger.error("Failed to initialize database tables", e);

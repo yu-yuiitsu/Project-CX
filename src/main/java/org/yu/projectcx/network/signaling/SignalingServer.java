@@ -190,6 +190,14 @@ public class SignalingServer {
                 case REGISTER, HEARTBEAT -> listener.onPeerConnected(message.getSenderPeerId(), message.getRecipientPeerId());
                 case BYE -> listener.onPeerDisconnected(message.getSenderPeerId());
                 case CHAT_MESSAGE -> listener.onChatMessageReceived(message);
+                case CONNECT_REQUEST -> listener.onConnectionRequestReceived(message);
+                case CONNECT_ACCEPT -> listener.onConnectionAccepted(message);
+                case CONNECT_REJECT -> listener.onConnectionRejected(message);
+                case PEER_NETWORK_QUERY -> listener.onPeerNetworkQueryReceived(message);
+                case PEER_NETWORK_RESPONSE -> listener.onPeerNetworkResponseReceived(message);
+                case GROUP_JOIN_REQUEST -> listener.onGroupJoinRequestReceived(message);
+                case GROUP_INTRODUCE -> listener.onGroupIntroduceReceived(message);
+                default -> {}
             }
         }
     }

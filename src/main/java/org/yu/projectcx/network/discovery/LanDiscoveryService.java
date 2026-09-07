@@ -8,6 +8,7 @@ import org.yu.projectcx.util.AsyncExecutor;
 
 import java.io.IOException;
 import java.net.DatagramPacket;
+import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.InterfaceAddress;
@@ -23,13 +24,15 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Automatic Local Network (LAN) Peer Discovery Service.
  * 
- * Uses Dual-Path Discovery:
+ * Uses Multi-Path Discovery:
  * 1. UDP Multicast (239.255.0.1:9888) and Broadcast (255.255.255.255:9888) across the local subnet.
  * 2. Shared SQLite Peer Heartbeats for instantaneous multi-instance detection on the same host.
+ * 3. Subnet Unicast Probing for Mobile Hotspots (Android/iOS) where multicast/broadcast is dropped.
  */
 public class LanDiscoveryService {
 
@@ -43,6 +46,7 @@ public class LanDiscoveryService {
     private final int localSignalingPort;
     private final List<PeerDiscoveryListener> listeners;
     private final AtomicBoolean isRunning;
+    private final AtomicInteger broadcastCounter;
     private PeerRepository peerRepository;
 
     private MulticastSocket multicastSocket;
@@ -66,6 +70,7 @@ public class LanDiscoveryService {
         this.peerRepository = peerRepository;
         this.listeners = new CopyOnWriteArrayList<>();
         this.isRunning = new AtomicBoolean(false);
+        this.broadcastCounter = new AtomicInteger(0);
     }
 
     public void setPeerRepository(PeerRepository peerRepository) {
@@ -150,12 +155,14 @@ public class LanDiscoveryService {
         // Path 1: Database Heartbeat sync (for instant reliable discovery on same host)
         if (peerRepository != null) {
             peerRepository.saveHeartbeat(localPeerId, localAlias, "127.0.0.1", localSignalingPort);
-            List<Peer> livePeers = peerRepository.getActiveLivePeers(4);
+            List<Peer> livePeers = peerRepository.getActiveLivePeers(8);
             java.util.Set<String> activeIds = new java.util.HashSet<>();
             for (Peer p : livePeers) {
                 if (!p.getPeerId().equalsIgnoreCase(localPeerId) && !p.getAlias().equalsIgnoreCase(localAlias)) {
                     activeIds.add(p.getPeerId().toLowerCase());
-                    activeIds.add(p.getAlias().toLowerCase());
+                    if (p.getAlias() != null) {
+                        activeIds.add(p.getAlias().toLowerCase());
+                    }
                     notifyPeerDiscovered(p);
                 }
             }
@@ -163,7 +170,9 @@ public class LanDiscoveryService {
             List<Peer> allPeers = peerRepository.getAllPeers();
             for (Peer p : allPeers) {
                 if (!p.getPeerId().equalsIgnoreCase(localPeerId) && !p.getAlias().equalsIgnoreCase(localAlias)) {
-                    if (!activeIds.contains(p.getPeerId().toLowerCase()) && !activeIds.contains(p.getAlias().toLowerCase())) {
+                    boolean isActive = activeIds.contains(p.getPeerId().toLowerCase())
+                            || (p.getAlias() != null && activeIds.contains(p.getAlias().toLowerCase()));
+                    if (!isActive) {
                         notifyPeerOffline(p.getPeerId());
                     }
                 }
@@ -173,15 +182,7 @@ public class LanDiscoveryService {
         // Path 2: Network UDP Multicast & Broadcast (for LAN subnet nodes)
         if (multicastSocket == null || multicastSocket.isClosed()) return;
 
-        String packetData = String.format("%s||%s||%s||%d||%d",
-                MAGIC_HEADER,
-                localPeerId,
-                localAlias,
-                localSignalingPort,
-                System.currentTimeMillis()
-        );
-
-        byte[] buffer = packetData.getBytes(StandardCharsets.UTF_8);
+        byte[] buffer = createPacketBuffer();
 
         try {
             // 1. Send to Multicast Group
@@ -202,17 +203,107 @@ public class LanDiscoveryService {
                     multicastSocket.send(packet);
                 } catch (IOException ignored) {}
             }
+
+            // Path 3: Periodic Subnet Unicast Probing for Mobile Hotspots (every 5 seconds)
+            if (broadcastCounter.incrementAndGet() % 5 == 0) {
+                sweepSubnetUnicast(buffer);
+            }
         } catch (Exception e) {
             logger.debug("Failed sending LAN discovery packet: {}", e.getMessage());
         }
     }
 
+    private java.util.function.Supplier<String> connectedPeersSupplier;
+
+    public void setConnectedPeersSupplier(java.util.function.Supplier<String> supplier) {
+        this.connectedPeersSupplier = supplier;
+    }
+
     /**
-     * Probes local network and triggers an instant broadcast and DB sync.
+     * Builds the standard serialized presence discovery datagram payload.
+     */
+    private byte[] createPacketBuffer() {
+        String connectedPeers = (connectedPeersSupplier != null) ? connectedPeersSupplier.get() : "";
+        if (connectedPeers == null) connectedPeers = "";
+        String packetData = String.format("%s||%s||%s||%d||%d||%s",
+                MAGIC_HEADER,
+                localPeerId,
+                localAlias,
+                localSignalingPort,
+                System.currentTimeMillis(),
+                connectedPeers
+        );
+        return packetData.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Path 3: Direct Subnet Unicast Sweep for Mobile Hotspots (Android/iOS)
+     * and restricted Wi-Fi APs where multicast/broadcast packets are blocked.
+     * Bounded to subnets between /24 and /30 (<= 256 host IPs) for safety and speed.
+     */
+    public void sweepSubnetUnicast(byte[] buffer) {
+        if (multicastSocket == null || multicastSocket.isClosed()) return;
+
+        try {
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            while (interfaces.hasMoreElements()) {
+                NetworkInterface ni = interfaces.nextElement();
+                if (ni.isLoopback() || !ni.isUp()) continue;
+
+                for (InterfaceAddress ia : ni.getInterfaceAddresses()) {
+                    InetAddress addr = ia.getAddress();
+                    if (!(addr instanceof Inet4Address) || addr.isLoopbackAddress()) {
+                        continue;
+                    }
+
+                    short prefix = ia.getNetworkPrefixLength();
+                    // Bound check: Only sweep subnets between /24 and /30 (<= 256 IPs)
+                    // Standard Android hotspot is /24 (192.168.43.0/24), iOS hotspot is /28 (172.20.10.0/28)
+                    if (prefix < 24 || prefix > 30) {
+                        continue;
+                    }
+
+                    byte[] ipBytes = addr.getAddress();
+                    int localIp = ((ipBytes[0] & 0xFF) << 24)
+                            | ((ipBytes[1] & 0xFF) << 16)
+                            | ((ipBytes[2] & 0xFF) << 8)
+                            | (ipBytes[3] & 0xFF);
+
+                    int mask = (prefix == 0) ? 0 : 0xFFFFFFFF << (32 - prefix);
+                    int network = localIp & mask;
+                    int broadcast = network | ~mask;
+
+                    for (int host = network + 1; host < broadcast; host++) {
+                        if (host == localIp) continue; // Skip own local IP
+
+                        byte[] targetBytes = new byte[]{
+                                (byte) ((host >> 24) & 0xFF),
+                                (byte) ((host >> 16) & 0xFF),
+                                (byte) ((host >> 8) & 0xFF),
+                                (byte) (host & 0xFF)
+                        };
+
+                        try {
+                            InetAddress target = InetAddress.getByAddress(targetBytes);
+                            DatagramPacket packet = new DatagramPacket(buffer, buffer.length, target, DISCOVERY_PORT);
+                            multicastSocket.send(packet);
+                        } catch (IOException ignored) {}
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("Subnet unicast sweep encountered issue: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Probes local network and triggers an instant broadcast, subnet sweep, and DB sync.
      */
     public void triggerLanScanAsync() {
         AsyncExecutor.runAsyncNetwork(() -> {
             logger.info("Initiating active LAN peer sweep...");
+            byte[] buffer = createPacketBuffer();
+            sweepSubnetUnicast(buffer);
             for (int i = 0; i < 3; i++) {
                 broadcastPresence();
                 try {
@@ -269,6 +360,14 @@ public class LanDiscoveryService {
 
             Peer discoveredPeer = new Peer(remotePeerId, remoteAlias, remoteIp, remoteSignalingPort);
             discoveredPeer.setOnline(true);
+            if (parts.length >= 6 && !parts[5].trim().isEmpty()) {
+                String[] peerAliases = parts[5].trim().split(",");
+                for (String pa : peerAliases) {
+                    if (!pa.trim().isEmpty()) {
+                        discoveredPeer.addConnectedPeerAlias(pa.trim());
+                    }
+                }
+            }
 
             logger.info("📡 Auto-Discovered LAN Peer: {} ({}:{})", remoteAlias, remoteIp, remoteSignalingPort);
             notifyPeerDiscovered(discoveredPeer);

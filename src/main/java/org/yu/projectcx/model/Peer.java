@@ -20,6 +20,7 @@ public class Peer {
     private int port;
     private boolean online;
     private LocalDateTime lastSeen;
+    private ConnectionStatus connectionStatus;
 
     /**
      * Default constructor: assigns an auto-generated ID and default connection attributes.
@@ -31,6 +32,7 @@ public class Peer {
         this.port = 8080;
         this.online = false;
         this.lastSeen = LocalDateTime.now();
+        this.connectionStatus = ConnectionStatus.DISCOVERED;
     }
 
     /**
@@ -55,12 +57,20 @@ public class Peer {
      * Overloaded constructor 3: full parameter constructor.
      */
     public Peer(String peerId, String alias, String ipAddress, int port, boolean online, LocalDateTime lastSeen) {
+        this(peerId, alias, ipAddress, port, online, lastSeen, ConnectionStatus.DISCOVERED);
+    }
+
+    /**
+     * Overloaded constructor 4: full parameter constructor including ConnectionStatus.
+     */
+    public Peer(String peerId, String alias, String ipAddress, int port, boolean online, LocalDateTime lastSeen, ConnectionStatus connectionStatus) {
         setPeerId(peerId);
         setAlias(alias);
         setIpAddress(ipAddress);
         setPort(port);
         this.online = online;
         this.lastSeen = (lastSeen != null) ? lastSeen : LocalDateTime.now();
+        this.connectionStatus = (connectionStatus != null) ? connectionStatus : ConnectionStatus.DISCOVERED;
     }
 
     // Getters and Setters with validation (Encapsulation)
@@ -123,6 +133,62 @@ public class Peer {
         this.lastSeen = lastSeen;
     }
 
+    public ConnectionStatus getConnectionStatus() {
+        return connectionStatus != null ? connectionStatus : ConnectionStatus.DISCOVERED;
+    }
+
+    public void setConnectionStatus(ConnectionStatus connectionStatus) {
+        this.connectionStatus = (connectionStatus != null) ? connectionStatus : ConnectionStatus.DISCOVERED;
+    }
+
+    private boolean groupJoinRequested = false;
+
+    public boolean isGroupJoinRequested() {
+        return groupJoinRequested;
+    }
+
+    public void setGroupJoinRequested(boolean groupJoinRequested) {
+        this.groupJoinRequested = groupJoinRequested;
+    }
+
+    private final java.util.Set<String> connectedPeerAliases = new java.util.concurrent.CopyOnWriteArraySet<>();
+
+    public java.util.Set<String> getConnectedPeerAliases() {
+        return java.util.Collections.unmodifiableSet(connectedPeerAliases);
+    }
+
+    public void setConnectedPeerAliases(java.util.Collection<String> aliases) {
+        this.connectedPeerAliases.clear();
+        if (aliases != null) {
+            for (String a : aliases) {
+                if (a != null && !a.trim().isEmpty()) {
+                    this.connectedPeerAliases.add(a.trim());
+                }
+            }
+        }
+    }
+
+    public void addConnectedPeerAlias(String alias) {
+        if (alias != null && !alias.trim().isEmpty()) {
+            this.connectedPeerAliases.add(alias.trim());
+        }
+    }
+
+    public void removeConnectedPeerAlias(String alias) {
+        if (alias != null) {
+            this.connectedPeerAliases.remove(alias.trim());
+        }
+    }
+
+    public boolean hasConnectedPeers() {
+        return !connectedPeerAliases.isEmpty();
+    }
+
+    public String getConnectedPeersSummary() {
+        if (connectedPeerAliases.isEmpty()) return "";
+        return String.join(", ", connectedPeerAliases);
+    }
+
     /**
      * Helper method to format network endpoint (e.g. 192.168.1.50:9001).
      */
@@ -150,6 +216,7 @@ public class Peer {
                 ", endpoint='" + getEndpoint() + '\'' +
                 ", online=" + online +
                 ", lastSeen=" + lastSeen +
+                ", connectionStatus=" + connectionStatus +
                 '}';
     }
 }

@@ -72,10 +72,23 @@ public class PeerManager {
 
     /**
      * Overload 1: Retrieves peer by unique peer ID.
+     * Falls back to alias-based linear search if direct key lookup misses
+     * (handles cases where peer is stored by alias but looked up by UUID).
      */
     public synchronized Optional<Peer> getPeer(String peerId) {
         if (peerId == null) return Optional.empty();
-        return Optional.ofNullable(peerDirectory.get(peerId));
+        // Direct key lookup first (fast path)
+        Peer direct = peerDirectory.get(peerId);
+        if (direct != null) return Optional.of(direct);
+        // Fallback: search by alias or any stored peerId matching (case-insensitive)
+        return peerDirectory.values().stream()
+                .filter(p -> p.getPeerId().equalsIgnoreCase(peerId)
+                        || p.getAlias().equalsIgnoreCase(peerId)
+                        || ("peer_" + p.getAlias()).equalsIgnoreCase(peerId)
+                        || ("peer_" + p.getPeerId()).equalsIgnoreCase(peerId)
+                        || p.getPeerId().replace("peer_", "").equalsIgnoreCase(peerId.replace("peer_", ""))
+                        || (p.getAlias() != null && p.getAlias().replace("peer_", "").equalsIgnoreCase(peerId.replace("peer_", ""))))
+                .findFirst();
     }
 
     /**
